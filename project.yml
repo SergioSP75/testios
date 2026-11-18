@@ -1,0 +1,36 @@
+# Definición del proyecto Xcode para XcodeGen (https://github.com/yonaskolb/XcodeGen).
+# En el Mac:  brew install xcodegen && cd ios && xcodegen generate && open HLSApp.xcodeproj
+name: HLSApp
+options:
+  bundleIdPrefix: com.empresa
+  deploymentTarget:
+    iOS: "16.0"
+packages:
+  HLSCore:
+    path: .
+targets:
+  HLSApp:
+    type: application
+    platform: iOS
+    sources: [App]
+    dependencies:
+      - package: HLSCore
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: HLS
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        UILaunchScreen: {}
+        UIBackgroundModes: [audio]
+        UIFileSharingEnabled: true               # la carpeta de la app aparece en Archivos → En mi iPad → HLS
+        LSSupportsOpeningDocumentsInPlace: true
+        NSCameraUsageDescription: Para leer el código QR del receptor y enviarle listas
+        NSLocalNetworkUsageDescription: Para enviar el vídeo a la Apple TV (AirPlay) y a otros equipos de la red
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true   # listas IPTV con http://
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.empresa.hlsios
+      SWIFT_VERSION: "5.9"
+      MARKETING_VERSION: "1.0"            # la CI la pisa con 1.<nº de compilación>
+      CURRENT_PROJECT_VERSION: "1"

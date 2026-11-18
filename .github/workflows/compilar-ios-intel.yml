@@ -1,0 +1,38 @@
+name: Compilar iOS (Intel, respaldo)
+
+# Compila la app en un Mac de GitHub y deja un .ipa SIN firmar como descarga (artifact).
+# Ese .ipa se firma e instala en el iPad con Sideloadly (Apple ID gratuito) o desde Xcode.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tests de la lógica común (HLSCore)
+        run: swift test
+
+      - name: Generar el proyecto Xcode
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Compilar sin firmar
+        run: |
+          xcodebuild -project HLSApp.xcodeproj -scheme HLSApp -configuration Release \
+            -sdk iphoneos -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            MARKETING_VERSION="1.${{ github.run_number }}" CURRENT_PROJECT_VERSION="${{ github.run_number }}" build
+
+      - name: Empaquetar .ipa
+        run: |
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/HLSApp.app Payload/
+          zip -qr HLSApp-unsigned.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HLSApp-unsigned-ipa
+          path: HLSApp-unsigned.ipa
