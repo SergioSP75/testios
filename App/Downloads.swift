@@ -156,7 +156,9 @@ final class DownloadManager: ObservableObject {
         activeGroups.insert(job.group)
         let task = Task { try await self.download(job) }
         tasks[job.id] = task
+        BackgroundKeeper.shared.acquire()                 // sigue aunque se bloquee o apague la pantalla
         Task {
+            defer { BackgroundKeeper.shared.release() }
             do {
                 let name = try await task.value
                 update(job.id) { $0.state = "listo"; $0.progress = 1; $0.fileName = name; $0.speed = 0; $0.eta = 0 }
@@ -322,22 +324,21 @@ final class DownloadManager: ObservableObject {
         defer { try? FileManager.default.removeItem(at: tmpDir) }
         let tracks = [mkv.videoTrackNumber] + chosen.map { $0.number }
         Trace.shared.log("descarga", "«\(job.title)»: MKV → MP4 en el dispositivo · pistas \(tracks) (audios \(chosen.map { $0.language }))")
-        let files = tracks.map { tmpDir.appendingPathComponent("t\($0).mp4") }
         let started = Date()
         let total = mkv.totalBytes
         let meter = MkvMeter()
-        // Una sola pasada por el fichero: cada trozo se reparte entre el vídeo y los audios elegidos
-        try await mkv.export(tracks: zip(tracks, files).map { ($0, $1) }) { p in
+        let dest = Self.folder.appendingPathComponent("\(base).mp4")
+        // Una sola pasada por el fichero: se escribe directamente UN mp4 con vídeo y audios y listas de ediciones propias.
+        // (Antes se unían pistas sueltas con AVFoundation y el audio podía quedar desplazado.)
+        try? FileManager.default.removeItem(at: dest)
+        try await mkv.exportMp4(tracks: tracks, to: dest) { p in
             let bytes = Int64(Double(total) * p)
             let sp = meter.speed(bytes: bytes)                     // bytes/s del fichero original, suavizada
             Task { @MainActor in
                 let el = max(Date().timeIntervalSince(started), 0.5)
-                self.update(job.id, save: false) { $0.progress = 0.9 * p; $0.bytes = bytes; $0.speed = sp; $0.eta = p > 0.01 ? el * (1 - p) / p : 0 }
+                self.update(job.id, save: false) { $0.progress = 0.99 * p; $0.bytes = bytes; $0.speed = sp; $0.eta = p > 0.01 ? el * (1 - p) / p : 0 }
             }
         }
-        update(job.id) { $0.state = "uniendo"; $0.progress = 0.92; $0.speed = 0; $0.eta = 0 }
-        let dest = Self.folder.appendingPathComponent("\(base).mp4")
-        try await Self.mux(video: files[0], audios: zip(files.dropFirst(), chosen).map { ($0, $1.language.isEmpty ? "und" : $1.language) }, to: dest)
         return dest.lastPathComponent
     }
 

@@ -1,8 +1,8 @@
 import SwiftUI
 import HLSCore
 
-/// Servidores externos: Emby, Jellyfin y Plex. Entrada de cuenta y acceso a la biblioteca.
-struct ServersView: View {
+/// Gestión de cuentas de servidores externos: añadir, editar, borrar, poner nombre; ajustes de MKV y user agent.
+struct ServersAccountsView: View {
     @StateObject private var hub = ServerHub.shared
     @State private var loginFor: String?          // "emby" | "jellyfin" | "plex"
     @State private var ua = ServerUa.standard
@@ -169,5 +169,55 @@ struct ServerLoginView: View {
         guard let plex = ServerHub.shared.backend(slot) as? PlexClient else { return }
         do { let tok = try await plex.signIn(email: user, password: pass); _ = try await plex.finishLogin(accountToken: tok); ServerHub.shared.setCustomName(accountName, for: slot); done() }
         catch { message = error.localizedDescription }
+    }
+}
+
+
+/// Servidores externos como en Android: arriba una barra con un chip por cuenta (icono + nombre) y «Todos»; al tocar uno cambia la
+/// biblioteca de la misma ventana, sin volver atrás. El engranaje abre la gestión de cuentas.
+struct ServersView: View {
+    @ObservedObject private var hub = ServerHub.shared
+    @EnvironmentObject var themes: ThemeStore
+    @AppStorage("server.current") private var current = ""        // cuenta elegida ("" = la primera) o «all:<tipo>»
+    @State private var showAccounts = false
+
+    private var active: [ServerBackend] { ServerHub.types.flatMap { hub.active(of: $0) } }
+
+    var body: some View {
+        let t = themes.theme
+        VStack(spacing: 0) {
+            if active.isEmpty {
+                ServersAccountsView()
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(ServerHub.types.filter { hub.active(of: $0).count > 1 }, id: \.self) { type in
+                            chip("🔀 Todos \(type.capitalized)", on: current == "all:\(type)") { current = "all:\(type)" }
+                        }
+                        ForEach(active, id: \.kind) { s in
+                            chip("\(s.icon) \(hub.tag(s))", on: selected?.kind == s.kind && !current.hasPrefix("all:")) { current = s.kind }
+                        }
+                        Button { showAccounts = true } label: { Label("Cuentas", systemImage: "plus.circle").font(.footnote) }
+                            .buttonStyle(.bordered)
+                    }.padding(.horizontal).padding(.vertical, 8)
+                }.background(t.c(t.card))
+                Group {
+                    if current.hasPrefix("all:") { MergedBrowserView(type: String(current.dropFirst(4))).id(current) }
+                    else if let s = selected { ServerBrowserView(backend: s, parent: nil, title: hub.tag(s)).id(s.kind) }
+                }
+            }
+        }
+        .themedScreen()
+        .navigationTitle("Servidores")
+        .toolbar { ToolbarItem(placement: .topBarTrailing) { Button { showAccounts = true } label: { Image(systemName: "gearshape") } } }
+        .sheet(isPresented: $showAccounts) { NavigationStack { ServersAccountsView().toolbar { ToolbarItem(placement: .topBarLeading) { Button("Cerrar") { showAccounts = false; hub.touch() } } } }.environmentObject(themes) }
+    }
+
+    /// Cuenta mostrada: la elegida si sigue conectada; si no, la primera.
+    private var selected: ServerBackend? { active.first(where: { $0.kind == current }) ?? active.first }
+
+    private func chip(_ text: String, on: Bool, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) { Text(text).font(.footnote).lineLimit(1) }
+            .buttonStyle(.borderedProminent).tint(on ? .accentColor : .gray.opacity(0.4)).foregroundStyle(on ? Color.white : Color.primary)
     }
 }

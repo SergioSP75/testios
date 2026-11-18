@@ -39,6 +39,13 @@ Task {
         let t0 = Date()
         let m = try await MkvToHls.open(source: src, log: { print("[mkv]", $0) })
         print(String(format: "abierto en %.1f s", Date().timeIntervalSince(t0)))
+        if args.count > 4, args[4] == "mp4" {
+            var tr = [m.videoTrackNumber]; tr += m.audioTracks.prefix(2).map { $0.number }
+            let t0 = Date()
+            try await m.exportMp4(tracks: tr, to: out.appendingPathComponent("salida.mp4"), maxSegments: count) { _ in }
+            print(String(format: "MP4 escrito en %.1f s", Date().timeIntervalSince(t0)))
+            sem.signal(); return
+        }
         let master = await m.handle(path: "/master.m3u8"); save("master.m3u8", master.body); print(String(decoding: master.body, as: UTF8.self))
         var tracks = [m.videoTrackNumber]; tracks += m.audioTracks.map { $0.number }
         for t in tracks {

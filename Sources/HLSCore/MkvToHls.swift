@@ -192,6 +192,29 @@ public final class MkvToHls: RelayHandler {
         }
     }
 
+    /// Entrada de muestras (avc1/hvc1/mp4a/ac-3/ec-3) y escala de tiempo de una pista.
+    private func trackEntry(_ n: Int) throws -> (entry: [UInt8], timescale: UInt32, video: Bool, language: String) {
+        if n == video.number {
+            let hevc = video.codecId == "V_MPEGH/ISO/HEVC"
+            let colr: (p: Int, t: Int, m: Int, full: Bool)? = video.colorTransfer > 0 || video.colorPrimaries > 0
+                ? (video.colorPrimaries == 0 ? 2 : video.colorPrimaries, video.colorTransfer == 0 ? 2 : video.colorTransfer, video.colorMatrix == 0 ? 2 : video.colorMatrix, video.colorRange == 2) : nil
+            return (Mp4.videoEntry(hevc: hevc, width: video.width, height: video.height, config: video.codecPrivate, colr: colr), 90000, true, video.language)
+        }
+        guard let a = audios.first(where: { $0.number == n }) else { throw MkvError.unsupported("pista \(n) desconocida") }
+        let rate = audioRate(a)
+        let entry: [UInt8]
+        switch a.codecId {
+        case "A_AAC": entry = Mp4.audioEntry(type: "mp4a", channels: a.channels, sampleRate: rate, config: Mp4.esds(asc: a.codecPrivate))
+        case "A_AC3":
+            guard let h = audioHeads[n], let d = CodecStrings.dac3(frame: h) else { throw MkvError.unsupported("audio AC-3 ilegible") }
+            entry = Mp4.audioEntry(type: "ac-3", channels: a.channels, sampleRate: rate, config: Mp4.box("dac3", d))
+        default:
+            guard let h = audioHeads[n], let d = CodecStrings.dec3(frame: h) else { throw MkvError.unsupported("audio E-AC-3 ilegible") }
+            entry = Mp4.audioEntry(type: "ec-3", channels: a.channels, sampleRate: rate, config: Mp4.box("dec3", d.box))
+        }
+        return (entry, UInt32(rate), false, a.language)
+    }
+
     private func initSegment(track n: Int) throws -> [UInt8] {
         lock.lock(); if let c = initCache[n] { lock.unlock(); return c }; lock.unlock()
         let out: [UInt8]
@@ -232,11 +255,17 @@ public final class MkvToHls: RelayHandler {
     private func secs(_ ticks: Int64) -> Double { info.seconds(ticks) }
 
     private func videoFragment(_ blocks: [MkvBlock], index: Int) -> [UInt8] {
+        let (dts0, samples) = videoSamples(blocks)
+        return Mp4.fragment(sequence: index + 1, trackId: video.number, baseTime: UInt64(max(dts0, 0)), samples: samples, video: true)
+    }
+
+    /// Fotogramas de un segmento en orden de decodificación, con su DTS inicial (escala 90 kHz) y desfases de composición.
+    private func videoSamples(_ blocks: [MkvBlock]) -> (dts0: Int64, samples: [Mp4Sample]) {
         // Desde el primer fotograma clave (lo anterior no se puede decodificar solo)
         var frames: [(pts: Double, key: Bool, data: [UInt8])] = []
         for b in blocks { for f in b.frames { frames.append((secs(b.ticks), b.keyframe, f)) } }
         if let k = frames.firstIndex(where: { $0.key }), k > 0 { frames.removeFirst(k) }
-        guard !frames.isEmpty else { return Mp4.fragment(sequence: index + 1, trackId: video.number, baseTime: 0, samples: [], video: true) }
+        guard !frames.isEmpty else { return (0, []) }
         let scale = 90000.0
         // Orden de decodificación = orden del fichero. DTS = tiempos de presentación ordenados (así quedan crecientes).
         // MKV solo guarda el instante de presentación, así que el desfase de composición saldría negativo en los fotogramas B.
@@ -252,11 +281,11 @@ public final class MkvToHls: RelayHandler {
             let cts = max(Int64(((f.pts + Self.shift) * scale).rounded()) - dts[i], 0)
             samples.append(Mp4Sample(data: f.data, duration: UInt32(min(dur, Int64(UInt32.max))), sync: f.key, compositionOffset: Int32(clamping: cts)))
         }
-        return Mp4.fragment(sequence: index + 1, trackId: video.number, baseTime: UInt64(max(dts[0], 0)), samples: samples, video: true)
+        return (dts[0], samples)
     }
 
-    private func audioFragment(_ a: MkvTrack, _ blocks: [MkvBlock], index: Int) -> [UInt8] {
-        let rate = Double(audioRate(a))
+    /// Tramas de audio de un segmento y el instante (s) de la primera.
+    private func audioSamples(_ a: MkvTrack, _ blocks: [MkvBlock]) -> (first: Double?, samples: [Mp4Sample]) {
         let per = UInt32(audioFrameSamples(a))
         var samples: [Mp4Sample] = []
         var first: Double?
@@ -264,6 +293,12 @@ public final class MkvToHls: RelayHandler {
             if first == nil { first = secs(b.ticks) }
             for f in b.frames { samples.append(Mp4Sample(data: f, duration: per, sync: true)) }
         }
+        return (first, samples)
+    }
+
+    private func audioFragment(_ a: MkvTrack, _ blocks: [MkvBlock], index: Int) -> [UInt8] {
+        let rate = Double(audioRate(a))
+        let (first, samples) = audioSamples(a, blocks)
         let base = UInt64(max(((first ?? segs[index].time) + Self.shift + Double(audioDelayMs) / 1000) * rate, 0).rounded())
         return Mp4.fragment(sequence: index + 1, trackId: a.number, baseTime: base, samples: samples, video: false)
     }
@@ -299,6 +334,63 @@ public final class MkvToHls: RelayHandler {
     public var totalBytes: Int64 { info.segmentEnd == Int64.max ? 0 : info.segmentEnd - info.segmentStart }
     public var videoTrackNumber: Int { video.number }
     public var audioTracks: [(number: Int, language: String, name: String, isDefault: Bool)] { audios.map { ($0.number, Self.iso1($0.language), $0.name, $0.isDefault) } }
+
+    /// Escribe vídeo y audios en UN MP4 normal (no fragmentado), bajando el fichero una sola vez. Cada pista lleva su lista de ediciones,
+    /// así que la imagen y el sonido quedan alineados exactamente como en el MKV, sin pasar por ningún montador del sistema.
+    public func exportMp4(tracks numbers: [Int], to url: URL, maxSegments: Int? = nil, progress: @escaping (Double) -> Void) async throws {
+        let total = maxSegments.map { min($0, segs.count) } ?? segs.count
+        var tables: [Int: Mp4Table] = [:]
+        for n in numbers {
+            let e = try trackEntry(n)
+            tables[n] = Mp4Table(number: n, isVideo: e.video, timescale: e.timescale, language: e.language, sampleEntry: e.entry,
+                                 width: e.video ? video.width : 0, height: e.video ? video.height : 0)
+        }
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+        let h = try FileHandle(forWritingTo: url)
+        defer { try? h.close() }
+        // ftyp + cabecera de mdat de 64 bits (su tamaño se escribe al final)
+        let ftyp = Mp4.box("ftyp", Mp4.fourCC("isom") + Mp4.u32(512) + Mp4.fourCC("isom") + Mp4.fourCC("iso6") + Mp4.fourCC("mp41"))
+        try h.write(contentsOf: Data(ftyp))
+        let mdatStart = UInt64(ftyp.count)
+        try h.write(contentsOf: Data(Mp4.u32(1) + Mp4.fourCC("mdat") + Mp4.u64(0)))
+        var pos = mdatStart + 16
+        let scale = 90000.0
+        for i in 0..<total {
+            try Task.checkCancellation()
+            let blocks = try await segmentBlocks(i).blocks
+            for n in numbers {
+                guard let t = tables[n] else { continue }
+                let mine = blocks.filter { $0.track == n }
+                var samples: [Mp4Sample] = []
+                var stamp: Int64 = 0
+                if t.isVideo { let r = videoSamples(mine); samples = r.samples; stamp = r.dts0 }
+                else if let a = audios.first(where: { $0.number == n }) {
+                    let r = audioSamples(a, mine); samples = r.samples
+                    stamp = Int64(((r.first ?? segs[i].time) * Double(t.timescale)).rounded())
+                }
+                guard !samples.isEmpty else { continue }
+                var buf = [UInt8](); buf.reserveCapacity(samples.reduce(0) { $0 + $1.data.count })
+                for s in samples { buf += s.data }
+                try h.write(contentsOf: Data(buf))
+                t.add(offset: pos, samples: samples, stamp: stamp)
+                pos += UInt64(buf.count)
+            }
+            progress(Double(i + 1) / Double(total))
+        }
+        // Fin de mdat: se escribe su tamaño real y después el moov
+        var lead: [Int: Double] = [:], start: [Int: Int64] = [:]
+        for n in numbers {
+            guard let t = tables[n] else { continue }
+            // Vídeo: el primer fotograma se ve en el instante `shift` de la pista (por eso se retrasó) y su momento real es su primer DTS.
+            // Audio: la primera trama está en la posición 0 y suena en su instante real. Así cada pista empieza donde empezaba en el MKV.
+            lead[n] = Double(t.firstStamp) / Double(t.timescale)
+            start[n] = t.isVideo ? Int64(Self.shift * scale) : 0
+        }
+        let moov = Mp4Moov.build(tables: numbers.compactMap { tables[$0] }, lead: lead, start: start)
+        try h.write(contentsOf: Data(moov))
+        try h.seek(toOffset: mdatStart + 8)
+        try h.write(contentsOf: Data(Mp4.u64(pos - mdatStart)))
+    }
 
     /// Escribe varias pistas a la vez (inicio + todos los segmentos de cada una) como MP4 fragmentados, bajando el fichero UNA sola vez.
     /// `progress` entre 0 y 1.
