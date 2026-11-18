@@ -40,7 +40,7 @@ struct AudioDelayButton: View {
                 Text("Si el sonido va por delante de la imagen, pon un valor positivo; si va por detrás, negativo.").font(.caption2).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center).frame(maxWidth: 280)
             }
-            .padding(18).presentationCompactAdaptation(.popover)
+            .padding(18)
         }
     }
 

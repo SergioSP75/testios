@@ -57,7 +57,7 @@ enum ServerDownloads {
 }
 
 /// Destino al tocar un elemento: ficha (con sinopsis, reproducir y descargar), temporadas o carpeta.
-@ViewBuilder
+@MainActor @ViewBuilder
 private func serverDestination(_ backendIn: ServerBackend, _ it: EmbyItem) -> some View {
     let backend = it.source.isEmpty ? backendIn : (ServerHub.shared.backend(it.source) ?? backendIn)
     if it.isPlayable { ServerDetailView(backend: backend, item: it) }
