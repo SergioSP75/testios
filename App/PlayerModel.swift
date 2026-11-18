@@ -336,6 +336,9 @@ final class PlayerModel: ObservableObject {
     }
 
     /// Salta a una posición (para continuar donde se dejó).
+    /// Dirección original del vídeo para abrirlo en otra app (nil si lleva claves DRM: una app externa no las tiene).
+    var externalURL: String? { guard let a = lastStart, a.2.isEmpty else { return nil }; return a.0.absoluteString }
+
     /// Mueve el audio respecto a la imagen. Hoy vale para los MKV pasados a HLS en el dispositivo (se reinicia por donde iba);
     /// en descargas lo hace el reproductor de descargas. Devuelve un texto si este tipo de reproducción no lo admite.
     func setAudioDelay(_ ms: Int) async -> String? {
