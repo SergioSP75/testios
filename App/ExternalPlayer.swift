@@ -7,6 +7,7 @@ struct ExternalPlayerButton: View {
     /// Dirección del vídeo; se pide al pulsar (en los servidores hay que preguntársela al servidor).
     let urlProvider: () async -> String?
     var label = "Abrir en otro reproductor"
+    var iconOnly = false                       // en las barras del reproductor: solo el icono
     @State private var message = ""
 
     private struct Player { let name: String; let make: (String) -> String }
@@ -24,7 +25,10 @@ struct ExternalPlayerButton: View {
             Button("Copiar enlace") {
                 Task { if let u = await urlProvider() { UIPasteboard.general.string = u; message = "Enlace copiado" } else { message = "No se pudo obtener el enlace" } }
             }
-        } label: { Label(label, systemImage: "arrow.up.forward.app") }
+        } label: {
+            if iconOnly { Image(systemName: "arrow.up.forward.app").frame(width: 44, height: 44).background(.black.opacity(0.6), in: Circle()).foregroundStyle(.white) }
+            else { Label(label, systemImage: "arrow.up.forward.app").font(.subheadline).padding(.horizontal, 12).padding(.vertical, 8).background(.quaternary, in: Capsule()) }
+        }
         .alert(message, isPresented: Binding(get: { !message.isEmpty }, set: { if !$0 { message = "" } })) { Button("Vale", role: .cancel) {} }
     }
 

@@ -210,8 +210,8 @@ struct ServerDetailView: View {
                             .font(.subheadline).padding(.horizontal, 12).padding(.vertical, 8)
                             .background(t.c(t.card), in: Capsule()).foregroundStyle(t.c(t.text2))
                     }.disabled(queued)
-                    ExternalPlayerButton(urlProvider: { try? await backend.streamUrlFor(item, StreamParams()) }, label: "Externo").font(.subheadline)
                 }
+                ExternalPlayerButton(urlProvider: { try? await backend.streamUrlFor(item, StreamParams()) }, label: "Abrir en otro reproductor (VLC, Infuse…)")
                 if !message.isEmpty { Text(message).font(.caption).foregroundStyle(t.c(t.dim)) }
                 if !item.overview.isEmpty { Text(item.overview).font(.callout).foregroundStyle(t.c(t.text2)) }
                 else { Text("Sin sinopsis").font(.callout).italic().foregroundStyle(t.c(t.dim)) }
@@ -320,7 +320,7 @@ struct ServerPlayerScreen: View {
         VStack(spacing: 0) {
             if let p = model.player { PlayerSurface(player: p) } else { ProgressView().frame(maxHeight: .infinity) }
             if !tracks.isEmpty { MkvTracksPanel(tracks: tracks).onTapGesture { withAnimation { tracks = [] } }.transition(.opacity) }
-            HStack { Spacer(); AudioDelayButton(applied: $model.audioDelayMs, apply: model.setAudioDelay).foregroundStyle(.white) }.padding(.horizontal, 8)
+            HStack { Spacer(); ExternalPlayerButton(urlProvider: { try? await backend.streamUrlFor(item, StreamParams()) }, iconOnly: true); AudioDelayButton(applied: $model.audioDelayMs, apply: model.setAudioDelay).foregroundStyle(.white) }.padding(.horizontal, 8)
             VStack(alignment: .leading, spacing: 4) {
                 Text(info.isEmpty ? model.status : info).font(.caption).foregroundStyle(.secondary)
                 if let e = model.errorText { Text(e).font(.caption).foregroundStyle(.red) }

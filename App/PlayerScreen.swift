@@ -166,6 +166,7 @@ struct TrackMenus: View {
                         }
                     } label: { Image(systemName: "captions.bubble").frame(width: 44, height: 44).background(.black.opacity(0.6), in: Circle()) }
                 }
+                if channel.clearKeys.isEmpty { ExternalPlayerButton(urlProvider: { channel.url }, iconOnly: true) }
                 AudioDelayButton(applied: $model.audioDelayMs, apply: model.setAudioDelay)
                 if AppSettings.ownSubtitles { SubtitleStyleMenu() }
                 AirPlayButton().frame(width: 44, height: 44).background(.black.opacity(0.6), in: Circle())

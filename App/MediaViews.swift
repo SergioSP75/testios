@@ -247,6 +247,7 @@ struct MediaDetailView: View {
                     Text(item.name).font(.title2.bold())
                     Text(meta).font(.footnote).foregroundStyle(t.c(t.dim))
                     Label(MediaHub.shared.library.platformLabel(item.platformKey), systemImage: "tag").font(.footnote).foregroundStyle(t.accentColor)
+                    if !item.isSeries, item.drm == nil, !item.url.isEmpty { ExternalPlayerButton(urlProvider: { item.url }, label: "Abrir en otro reproductor (VLC, Infuse…)") }
                     HStack(spacing: 10) {
                         if !item.isSeries {
                             NavigationLink { PlayerScreen(channel: item.asChannel, itemKey: MediaFavorites.key(item)) } label: {
@@ -261,7 +262,6 @@ struct MediaDetailView: View {
                                     .background(t.c(t.card), in: Capsule()).foregroundStyle(t.c(t.text2))
                             }
                         }
-                        if !item.isSeries, item.drm == nil, !item.url.isEmpty { ExternalPlayerButton(urlProvider: { item.url }, label: "Externo").font(.subheadline) }
                         Button { favs.toggle(item) } label: {
                             Image(systemName: favs.isFavorite(item) ? "star.fill" : "star").padding(10)
                                 .background(t.c(t.card), in: Circle()).foregroundStyle(favs.isFavorite(item) ? t.c(t.fav) : t.c(t.text2))
