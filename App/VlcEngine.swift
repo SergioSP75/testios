@@ -35,6 +35,7 @@ final class VlcEngine: NSObject, ObservableObject {
     @Published private(set) var statusText = ""
     /// Posición pedida antes de que el vídeo arranque (continuar donde se dejó): se aplica al empezar a sonar.
     private var pendingSeek: Double?
+    private var lastLoggedState = -1
     private var healthTask: Task<Void, Never>?
 
     /// Superficie donde VLC pinta el vídeo (la pone VlcVideoView).
@@ -167,6 +168,43 @@ final class VlcEngine: NSObject, ObservableObject {
         #endif
     }
 
+    /// El tiempo avanza: está reproduciendo aunque VLC siga diciendo «cargando». Quita la rueda y aplica la posición pendiente.
+    func markPlaying() {
+        #if canImport(MobileVLCKit)
+        isPlaying = true; isBuffering = false; statusText = ""
+        if let t = pendingSeek, durationSec > 0 { pendingSeek = nil; player.time = VLCTime(int: Int32(max(0, t) * 1000)) }
+        #endif
+    }
+
+    /// Fotograma real que VLC está pintando (la captura normal de pantalla no ve el vídeo por GPU). Devuelve el JPEG y el brillo medio
+    /// (0 = negro, 1 = blanco) para saber sin mirar si hay imagen de verdad. Solo para las pruebas.
+    func snapshot() async -> (jpeg: Data, brightness: Double)? {
+        #if canImport(MobileVLCKit)
+        let path = NSTemporaryDirectory() + "vlc_snap_\(Int(Date().timeIntervalSince1970)).png"
+        player.saveVideoSnapshot(at: path, withWidth: 640, andHeight: 0)
+        for _ in 0..<10 {
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            if let d = FileManager.default.contents(atPath: path), let img = UIImage(data: d), let jpg = img.jpegData(compressionQuality: 0.6) {
+                try? FileManager.default.removeItem(atPath: path)
+                return (jpg, Self.brightness(of: img))
+            }
+        }
+        #endif
+        return nil
+    }
+
+    /// Brillo medio de una imagen: se reduce a 8x8 píxeles y se promedia.
+    static func brightness(of img: UIImage) -> Double {
+        guard let cg = img.cgImage else { return 0 }
+        var px = [UInt8](repeating: 0, count: 8 * 8 * 4)
+        guard let ctx = CGContext(data: &px, width: 8, height: 8, bitsPerComponent: 8, bytesPerRow: 32, space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return 0 }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: 8, height: 8))
+        var sum = 0.0
+        for i in stride(from: 0, to: px.count, by: 4) { sum += (0.299 * Double(px[i]) + 0.587 * Double(px[i + 1]) + 0.114 * Double(px[i + 2])) / 255 }
+        return sum / 64
+    }
+
     /// La vista ya está en pantalla: VLC pinta en ella (se vuelve a enlazar por si se había creado antes que la vista).
     func attachSurface() {
         #if canImport(MobileVLCKit)
@@ -198,12 +236,17 @@ extension VlcEngine: VLCMediaPlayerDelegate {
     nonisolated func mediaPlayerStateChanged(_ aNotification: Notification) {
         Task { @MainActor in
             let st = self.player.state
-            Trace.shared.log("vlc", "estado \(st.rawValue) (0 parado, 1 abriendo, 2 cargando, 3 fin, 4 error, 5 sonando, 6 pausa) a los \(Int(Date().timeIntervalSince(self.startedAt))) s")
+            if st.rawValue != self.lastLoggedState {
+                self.lastLoggedState = st.rawValue
+                Trace.shared.log("vlc", "estado \(st.rawValue) (0 parado, 1 abriendo, 2 cargando, 3 fin, 4 error, 5 sonando, 6 pausa, 7 pistas) a los \(Int(Date().timeIntervalSince(self.startedAt))) s")
+            }
             switch st {
             case .playing:
                 self.isPlaying = true; self.isBuffering = false; self.statusText = ""; self.refreshTracks()
                 if let t = self.pendingSeek { self.pendingSeek = nil; self.player.time = VLCTime(int: Int32(max(0, t) * 1000)) }
-            case .buffering: self.isBuffering = true; self.statusText = "cargando…"
+            case .buffering:
+                // VLC 3 informa «cargando» durante toda la reproducción: si el tiempo avanza, está sonando
+                if self.player.isPlaying && self.positionSec > 0 { self.markPlaying() } else { self.isBuffering = true; self.statusText = "cargando…" }
             case .opening: self.isBuffering = true; self.statusText = "abriendo…"
             case .paused: self.isPlaying = false
             case .error:
@@ -218,6 +261,7 @@ extension VlcEngine: VLCMediaPlayerDelegate {
     nonisolated func mediaPlayerTimeChanged(_ aNotification: Notification) {
         Task { @MainActor in
             self.positionSec = Double(self.player.time.intValue) / 1000
+            if self.player.isPlaying && self.positionSec > 0 && (!self.isPlaying || self.isBuffering || !self.statusText.isEmpty) { self.markPlaying() }
             let len = self.player.media?.length.intValue ?? 0
             if len > 0 { self.durationSec = Double(len) / 1000 }
             if self.audioChoices.isEmpty || self.subtitleChoices.isEmpty { self.refreshTracks() }   // las pistas aparecen unos instantes después de arrancar

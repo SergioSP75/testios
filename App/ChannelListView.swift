@@ -105,7 +105,8 @@ struct ChannelListView: View {
             barButton("sidebar.right", on: showEpg) { withAnimation { showEpg.toggle() } }
             barButton("calendar") { EpgClock.shared.refresh(); showGrid = true }
             barButton("arrow.up.left.and.arrow.down.right") { withAnimation { fullscreen = true }; flashOverlay() }
-            if model.player != nil { QualityMenu(model: model); TrackMenus(model: model) }
+            if model.player != nil { QualityMenu(model: model) }
+            if model.player != nil || model.engine == .vlc { TrackMenus(model: model) }
         }
         .foregroundStyle(t.c(t.icon)).padding(.horizontal, 10).padding(.vertical, 6)
         .background(t.transparent ? AnyShapeStyle(.ultraThinMaterial) : AnyShapeStyle(t.c(t.bar)))
@@ -130,7 +131,7 @@ struct ChannelListView: View {
     private var videoLayer: some View {
         ZStack {
             Color.black
-            if let p = model.player { FullscreenVideo(player: p, onTap: { if fullscreen { flashOverlay() } }) }
+            if model.engine == .vlc || model.player != nil { ModelVideo(model: model, onTap: { if fullscreen { flashOverlay() } }) }
             else if current == nil { Text("Elige un canal").foregroundStyle(.white.opacity(0.6)) }
             else { ProgressView().tint(.white) }
             if AppSettings.ownSubtitles { SubtitleOverlay(text: model.subtitleText) }

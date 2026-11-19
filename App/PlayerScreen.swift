@@ -65,6 +65,10 @@ struct PlayerScreen: View {
                     Text(model.qualityText).font(.caption2.monospacedDigit()).padding(.horizontal, 8).padding(.vertical, 3)
                         .background(.black.opacity(0.5), in: Capsule()).foregroundStyle(.white).frame(maxWidth: .infinity, alignment: .trailing).padding(8)
                 }
+                if let note = model.engineNote {
+                    Label(note, systemImage: "info.circle").font(.caption2).padding(.horizontal, 10).padding(.vertical, 6)
+                        .background(.orange.opacity(0.85), in: Capsule()).foregroundStyle(.black).padding(.bottom, 6)
+                }
                 if let n = model.notice {
                     HStack(spacing: 8) { ProgressView().tint(.white); Text(n).font(.caption.bold()) }
                         .padding(.horizontal, 12).padding(.vertical, 8).background(.black.opacity(0.75), in: Capsule()).foregroundStyle(.white).padding(.bottom, 8)
@@ -193,4 +197,23 @@ struct AirPlayButton: UIViewRepresentable {
         return v
     }
     func updateUIView(_ v: AVRoutePickerView, context: Context) {}
+}
+
+/// Vídeo del reproductor elegido: VLC o el reproductor del sistema. Lo usan todas las pantallas que reproducen
+/// (si no, con VLC se oye el audio pero la pantalla se queda con la rueda).
+struct ModelVideo: View {
+    @ObservedObject var model: PlayerModel
+    var onTap: () -> Void = {}
+    var body: some View {
+        if model.engine == .vlc {
+            ZStack {
+                VlcVideoView(engine: model.vlc, onTap: onTap)
+                VlcStatusBadge(engine: model.vlc)
+            }
+        } else if let p = model.player {
+            FullscreenVideo(player: p, onTap: onTap)
+        } else {
+            ProgressView().tint(.white)
+        }
+    }
 }

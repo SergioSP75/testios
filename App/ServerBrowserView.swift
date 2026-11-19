@@ -318,10 +318,11 @@ struct ServerPlayerScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let p = model.player { PlayerSurface(player: p) } else { ProgressView().frame(maxHeight: .infinity) }
+            ModelVideo(model: model).frame(maxHeight: .infinity).background(Color.black)
             if !tracks.isEmpty { MkvTracksPanel(tracks: tracks).onTapGesture { withAnimation { tracks = [] } }.transition(.opacity) }
-            HStack { Spacer(); ExternalPlayerButton(urlProvider: { try? await backend.streamUrlFor(item, StreamParams()) }, iconOnly: true); AudioDelayButton(applied: $model.audioDelayMs, apply: model.setAudioDelay).foregroundStyle(.white) }.padding(.horizontal, 8)
+            HStack { Spacer(); ExternalPlayerButton(urlProvider: { try? await backend.streamUrlFor(item, StreamParams()) }, iconOnly: true); TrackMenus(model: model); AudioDelayButton(applied: $model.audioDelayMs, apply: model.setAudioDelay).foregroundStyle(.white) }.padding(.horizontal, 8)
             VStack(alignment: .leading, spacing: 4) {
+                if let note = model.engineNote { Label(note, systemImage: "info.circle").font(.caption2).foregroundStyle(.orange) }
                 Text(info.isEmpty ? model.status : info).font(.caption).foregroundStyle(.secondary)
                 if let e = model.errorText { Text(e).font(.caption).foregroundStyle(.red) }
             }.padding(8).frame(maxWidth: .infinity, alignment: .leading)
@@ -349,6 +350,8 @@ struct ServerPlayerScreen: View {
             if !tracksShown, AppSettings.mkvMode == "local",
                let r = await MkvToHls.survey(source: HttpRangeSource(fetcher: URLSessionFetcher(attempts: 3), url: url, headers: ["User-Agent": ServerUa.standard])) { tracks = r; tracksShown = true; Task { try? await Task.sleep(nanoseconds: 7_000_000_000); withAnimation { tracks = [] } } }
             await model.start(url: url, headers: ["User-Agent": ServerUa.standard], clearKeys: [:])
+            // «Seguir viendo»: continuar donde se dejó (con VLC el salto espera a que el vídeo arranque)
+            if item.resumeSec > 20 { model.seek(to: Double(item.resumeSec)) }
             await backend.report(item: item, state: "start", positionSec: item.resumeSec, durationSec: item.runtimeSec)
         } catch { model.errorText = error.localizedDescription }
     }

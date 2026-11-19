@@ -11,6 +11,8 @@ final class PlayerModel: ObservableObject {
     @Published var player: AVPlayer?
     /// Qué reproductor está abierto ahora: AVPlayer (con el relay propio) o VLC (decodifica casi todo por software).
     @Published private(set) var engine: PlaybackEngine = .avplayer
+    /// Aviso permanente sobre el motor («VLC no abre contenido con claves: se usa el reproductor interno»); nil si no hay nada que avisar.
+    @Published private(set) var engineNote: String?
     /// VLC: se crea la primera vez que hace falta (la librería es pesada).
     private(set) lazy var vlc = VlcEngine()
     private var vlcSinks: [AnyCancellable] = []
@@ -91,6 +93,7 @@ final class PlayerModel: ObservableObject {
         if audioGroup == nil, minHeight == nil, fixedHeight == 0 { chosenAudioGroup = nil }      // arranque nuevo: sin grupo forzado
         else if audioGroup != nil { chosenAudioGroup = audioGroup }
         stop()
+        engineNote = nil
         startGen += 1; let gen = startGen
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         try? AVAudioSession.sharedInstance().setActive(true)
@@ -109,7 +112,13 @@ final class PlayerModel: ObservableObject {
         guard gen == startGen else { RelayManager.shared.end(plan); return }
         self.plan = plan
         if VlcEngine.isAvailable {
-            let wantsVlc = setting == .vlc || (setting == .auto && !plan.viaRelay && plan.reason.hasPrefix("MKV directo"))
+            // VLC no descifra ClearKey, SAMPLE-AES ni FairPlay: con claves (o un HLS cifrado) se usa el reproductor interno aunque se haya forzado VLC
+            let isDrm = !clearKeys.isEmpty || plan.reason.contains("hlsEncrypted")
+            if setting == .vlc && isDrm {
+                engineNote = "VLC no abre contenido con claves (ClearKey/DRM): se usa el reproductor interno"
+                Trace.shared.log("vlc", "forzado a VLC pero hay claves/DRM → reproductor interno")
+            }
+            let wantsVlc = (setting == .vlc && !isDrm) || (setting == .auto && !plan.viaRelay && plan.reason.hasPrefix("MKV directo"))
             if wantsVlc {
                 // Con relay (descifrado, DASH→HLS…) VLC lee el HLS del relay; sin relay, la dirección original
                 if plan.viaRelay { self.plan = plan } else { RelayManager.shared.end(plan); self.plan = nil }

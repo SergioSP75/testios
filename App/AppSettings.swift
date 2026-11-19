@@ -99,6 +99,7 @@ struct PlayerSettingsSection: View {
             Picker("Motor", selection: $engine) {
                 ForEach(EngineSetting.allCases, id: \.rawValue) { Text($0.label).tag($0.rawValue) }
             }.themedRow()
+            if engine == EngineSetting.vlc.rawValue { Text("Aviso: VLC no abre contenido con claves ClearKey ni DRM (Disney, Max, canales con claves). Con «Siempre VLC» esos títulos se abren con el reproductor interno.").font(.caption).foregroundStyle(.orange).themedRow() }
             if !VlcEngine.isAvailable { Text("Esta compilación no lleva VLC: solo funciona AVPlayer.").font(.caption).foregroundStyle(themes.theme.c(themes.theme.dim)).themedRow() }
             Toggle("Pantalla completa (sin marcos)", isOn: $fullscreen).themedRow()
             Toggle("Rellenar pantalla (recorta bordes)", isOn: $fill).themedRow()

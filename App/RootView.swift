@@ -14,6 +14,12 @@ struct RootView: View {
             }
         }
         .task { DownloadManager.shared.resume() }
+        .fullScreenCover(item: $remote.serverPlayRequest) { r in
+            NavigationStack {
+                ServerPlayerScreen(backend: r.backend, item: r.item)
+                    .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Cerrar") { remote.serverPlayRequest = nil } } }
+            }
+        }
         .fullScreenCover(item: $remote.playRequest) { ch in
             NavigationStack {
                 PlayerScreen(channel: ch)

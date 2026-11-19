@@ -44,6 +44,8 @@ final class MediaLists: ObservableObject {
 final class RemoteControl: ObservableObject {
     static let shared = RemoteControl()
     @Published var playRequest: IptvChannel?
+    /// Título de un servidor (Plex, Emby, Jellyfin) abierto por orden remota: pasa por la misma pantalla que al pulsar «Reproducir».
+    @Published var serverPlayRequest: ServerPlayRequest?
     private weak var store: PlaylistStore?
     private var running = false
 
@@ -78,7 +80,9 @@ final class RemoteControl: ObservableObject {
         case "quality": if let m = PlayerModel.current { let h = (cmd["height"] as? Int) ?? 0; Task { await m.setQuality(height: h) } }
         case "pause": PlayerModel.current?.player?.pause(); Trace.shared.log("remoto", "pausa")
         case "resume": PlayerModel.current?.player?.play(); Trace.shared.log("remoto", "reanudar")
-        case "stop": playRequest = nil; Trace.shared.log("remoto", "reproductor cerrado")
+        case "playserver": playServer(cmd)
+        case "screenshot": screenshot(cmd)
+        case "stop": playRequest = nil; serverPlayRequest = nil; Trace.shared.log("remoto", "reproductor cerrado")
         case "dlclear": DownloadManager.shared.removeAll()
         case "setpref": for (k, v) in (cmd["values"] as? [String: Any]) ?? [:] { UserDefaults.standard.set(v, forKey: k) }; Trace.shared.log("remoto", "ajustes cambiados: \(((cmd["values"] as? [String: Any]) ?? [:]).keys.sorted())")
         case "trace":
@@ -121,6 +125,63 @@ final class RemoteControl: ObservableObject {
         ch.userAgent = cmd["userAgent"] as? String
         ch.referrer = cmd["referrer"] as? String
         return ch
+    }
+
+    /// `playserver`: busca un título en los servidores activos (`type`: plex/emby/jellyfin, `query`: nombre; con `resume: true` solo en «Seguir viendo»)
+    /// y lo abre en la pantalla real de servidores, para probar el mismo camino que usa quien pulsa en la interfaz.
+    private func playServer(_ cmd: [String: Any]) {
+        let type = (cmd["type"] as? String) ?? "plex"
+        let q = ((cmd["query"] as? String) ?? "").lowercased()
+        let onlyResume = (cmd["resume"] as? Bool) ?? false
+        Task {
+            for b in ServerHub.shared.active(of: type) {
+                let cont = (try? await b.resume()) ?? []
+                if let it = cont.first(where: { $0.isPlayable && (q.isEmpty || $0.name.lowercased().contains(q)) }) {
+                    Trace.shared.log("remoto", "playserver: «\(it.name)» de «Seguir viendo» (continúa en \(it.resumeSec) s)")
+                    serverPlayRequest = ServerPlayRequest(backend: b, item: it); return
+                }
+                if onlyResume { continue }
+                let page = try? await b.items(parentId: nil, search: q, start: 0, limit: 30, filter: ServerFilter(sort: .name))
+                if let it = page?.items.first(where: { $0.isPlayable }) {
+                    Trace.shared.log("remoto", "playserver: «\(it.name)» (búsqueda)")
+                    serverPlayRequest = ServerPlayRequest(backend: b, item: it); return
+                }
+            }
+            Trace.shared.log("remoto", "playserver: sin resultados para «\(q)» en \(type)")
+        }
+    }
+
+    /// `screenshot`: manda al PC una captura de la pantalla del iPad y, si suena VLC, el fotograma real del vídeo con su brillo medio
+    /// (así una pantalla negra con audio se detecta sola). `name` pone nombre al archivo.
+    private func screenshot(_ cmd: [String: Any]) {
+        let name = (cmd["name"] as? String) ?? "captura"
+        Task {
+            var luma = ""
+            if let m = PlayerModel.current, m.engine == .vlc, let s = await m.vlc.snapshot() {
+                luma = String(format: "%.2f", s.brightness)
+                await Self.upload(s.jpeg, name: name, kind: "video", extra: "brillo=" + luma)
+                Trace.shared.log("captura", "«\(name)» fotograma de VLC: brillo \(luma) (" + (s.brightness < 0.03 ? "NEGRO" : "con imagen") + ")")
+            }
+            if let img = Self.captureWindow(), let jpg = img.jpegData(compressionQuality: 0.6) {
+                await Self.upload(jpg, name: name, kind: "pantalla", extra: "")
+                Trace.shared.log("captura", "«\(name)» pantalla enviada (\(jpg.count / 1024) KB)")
+            } else { Trace.shared.log("captura", "«\(name)» sin ventana que capturar") }
+        }
+    }
+
+    private static func captureWindow() -> UIImage? {
+        let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first { $0.activationState == .foregroundActive }
+            ?? UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        guard let window = scene?.windows.first(where: { $0.isKeyWindow }) ?? scene?.windows.first else { return nil }
+        return UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+    }
+
+    private static func upload(_ data: Data, name: String, kind: String, extra: String) async {
+        let q = name.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "captura"
+        guard let url = URL(string: Trace.shared.server + "/shot?name=\(q)&kind=\(kind)&\(extra)") else { return }
+        var req = URLRequest(url: url, timeoutInterval: 15)
+        req.httpMethod = "POST"; req.httpBody = data
+        _ = try? await URLSession.shared.data(for: req)
     }
 
     private func play(_ cmd: [String: Any]) { playRequest = channel(from: cmd) }
@@ -185,3 +246,10 @@ enum UIDeviceInfo { @MainActor static var summary: String { "\(UIDevice.current.
 #else
 enum UIDeviceInfo { static var summary: String { "?" } }
 #endif
+
+/// Petición remota de reproducir un título de un servidor.
+struct ServerPlayRequest: Identifiable {
+    let id = UUID()
+    let backend: ServerBackend
+    let item: EmbyItem
+}
