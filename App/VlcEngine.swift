@@ -31,6 +31,11 @@ final class VlcEngine: NSObject, ObservableObject {
     /// Texto «Español · AC-3 5.1» de la pista que suena (lo que ve el usuario en la barra)
     @Published private(set) var audioInfo = ""
     @Published private(set) var errorText: String?
+    /// Lo que está haciendo VLC («abriendo…», «cargando…», «sin imagen»): se enseña mientras no hay imagen para saber en qué punto se queda.
+    @Published private(set) var statusText = ""
+    /// Posición pedida antes de que el vídeo arranque (continuar donde se dejó): se aplica al empezar a sonar.
+    private var pendingSeek: Double?
+    private var healthTask: Task<Void, Never>?
 
     /// Superficie donde VLC pinta el vídeo (la pone VlcVideoView).
     let surface = UIView()
@@ -43,6 +48,8 @@ final class VlcEngine: NSObject, ObservableObject {
     override init() {
         super.init()
         surface.backgroundColor = .black
+        surface.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        surface.clipsToBounds = true
         #if canImport(MobileVLCKit)
         player.drawable = surface
         player.delegate = self
@@ -55,7 +62,10 @@ final class VlcEngine: NSObject, ObservableObject {
     /// (tokens, X-…) la pone el relay local, y PlayerModel entonces le da a VLC la dirección del relay en vez de la original.
     static func options(headers: [String: String], networkCacheMs: Int) -> [String: Any] {
         // VLCMedia.addOptions antepone «:» a cada clave y escribe «clave=valor»
-        var o: [String: Any] = ["network-caching": networkCacheMs, "file-caching": min(networkCacheMs, 1500), "clock-jitter": 0, "clock-synchro": 0]
+        // VLC no empieza a reproducir hasta llenar el colchón: con los 20 s de Ajustes una película de 30 Mbps tardaba minutos en enseñar imagen.
+        // Se limita a 3 s; el reloj se deja como VLC lo trae (sin tocar clock-synchro ni clock-jitter).
+        let cache = min(max(networkCacheMs, 1000), 3000)
+        var o: [String: Any] = ["network-caching": cache, "file-caching": min(cache, 1500)]
         if let ua = RequestHeaders.value(headers, "User-Agent"), !ua.isEmpty { o["http-user-agent"] = ua }
         if let ref = RequestHeaders.value(headers, "Referer") ?? RequestHeaders.value(headers, "Referrer"), !ref.isEmpty { o["http-referrer"] = ref }
         if let cookie = RequestHeaders.value(headers, "Cookie"), !cookie.isEmpty { o["http-cookie"] = cookie }
@@ -70,22 +80,26 @@ final class VlcEngine: NSObject, ObservableObject {
     func play(url: URL, headers: [String: String], bufferSeconds: Double) {
         #if canImport(MobileVLCKit)
         stop()
-        failed = false; errorText = nil
+        failed = false; errorText = nil; statusText = "abriendo…"
         let media = VLCMedia(url: url)
         media.addOptions(Self.options(headers: headers, networkCacheMs: Int(max(1, bufferSeconds) * 1000)))
         player.media = media
+        player.drawable = surface                       // por si SwiftUI recreó la vista
         startedAt = Date()
         player.play()
-        Trace.shared.log("vlc", "play \(url.host ?? url.lastPathComponent)")
+        Trace.shared.log("vlc", "play \(url.host ?? url.lastPathComponent) · colchón \(Self.options(headers: headers, networkCacheMs: Int(max(1, bufferSeconds) * 1000))["network-caching"] ?? "?") ms")
+        startHealthLog()
         #else
         failed = true; errorText = "Esta compilación no incluye VLC"
         #endif
     }
 
     func stop() {
+        healthTask?.cancel(); healthTask = nil; pendingSeek = nil
         #if canImport(MobileVLCKit)
         if player.media != nil || player.isPlaying { player.stop() }
         #endif
+        statusText = ""
         isPlaying = false; isBuffering = false; positionSec = 0; durationSec = 0
         audioChoices = []; subtitleChoices = []; audioInfo = ""
     }
@@ -103,8 +117,28 @@ final class VlcEngine: NSObject, ObservableObject {
 
     func seek(to seconds: Double) {
         #if canImport(MobileVLCKit)
+        // Antes de que arranque el vídeo VLC ignora el salto: se guarda y se aplica al empezar a sonar
+        guard isPlaying, durationSec > 0 else { pendingSeek = seconds; return }
         player.time = VLCTime(int: Int32(max(0, seconds) * 1000))
         #endif
+    }
+
+    /// Cada 5 s apunta qué ve VLC (para saber desde el PC por qué no hay imagen).
+    private func startHealthLog() {
+        healthTask?.cancel()
+        healthTask = Task { @MainActor [weak self] in
+            var n = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard let self = self, !Task.isCancelled else { return }
+                n += 1
+                #if canImport(MobileVLCKit)
+                let sz = self.player.videoSize
+                Trace.shared.log("vlc", "salud \(n * 5)s · estado=\(self.player.state.rawValue) sonando=\(self.player.isPlaying) imagen=\(self.player.hasVideoOut) tamaño=\(Int(sz.width))x\(Int(sz.height)) t=\(self.player.time.intValue / 1000)s dur=\(self.durationSec)s audios=\(self.audioChoices.count) subs=\(self.subtitleChoices.count) superficie=\(Int(self.surface.bounds.width))x\(Int(self.surface.bounds.height)) enVentana=\(self.surface.window != nil)")
+                if n >= 6 && !self.player.hasVideoOut && self.isPlaying { self.statusText = "suena pero VLC no da imagen" }
+                #endif
+            }
+        }
     }
 
     // MARK: - Pistas
@@ -133,6 +167,13 @@ final class VlcEngine: NSObject, ObservableObject {
         #endif
     }
 
+    /// La vista ya está en pantalla: VLC pinta en ella (se vuelve a enlazar por si se había creado antes que la vista).
+    func attachSurface() {
+        #if canImport(MobileVLCKit)
+        player.drawable = surface
+        #endif
+    }
+
     func refreshTracks() {
         #if canImport(MobileVLCKit)
         func list(_ names: [Any]?, _ idx: [Any]?, current: Int32) -> [PlayerModel.TrackChoice] {
@@ -156,12 +197,17 @@ final class VlcEngine: NSObject, ObservableObject {
 extension VlcEngine: VLCMediaPlayerDelegate {
     nonisolated func mediaPlayerStateChanged(_ aNotification: Notification) {
         Task { @MainActor in
-            switch self.player.state {
-            case .playing: self.isPlaying = true; self.isBuffering = false; self.refreshTracks()
-            case .buffering, .opening: self.isBuffering = true
+            let st = self.player.state
+            Trace.shared.log("vlc", "estado \(st.rawValue) (0 parado, 1 abriendo, 2 cargando, 3 fin, 4 error, 5 sonando, 6 pausa) a los \(Int(Date().timeIntervalSince(self.startedAt))) s")
+            switch st {
+            case .playing:
+                self.isPlaying = true; self.isBuffering = false; self.statusText = ""; self.refreshTracks()
+                if let t = self.pendingSeek { self.pendingSeek = nil; self.player.time = VLCTime(int: Int32(max(0, t) * 1000)) }
+            case .buffering: self.isBuffering = true; self.statusText = "cargando…"
+            case .opening: self.isBuffering = true; self.statusText = "abriendo…"
             case .paused: self.isPlaying = false
             case .error:
-                self.failed = true; self.isPlaying = false
+                self.failed = true; self.isPlaying = false; self.statusText = ""
                 self.errorText = "VLC no pudo abrir este vídeo"
                 Trace.shared.log("vlc", "ERROR de reproducción tras \(Int(Date().timeIntervalSince(self.startedAt))) s")
             case .ended, .stopped: self.isPlaying = false
@@ -192,6 +238,7 @@ struct VlcVideoView: UIViewRepresentable {
     }
     func makeUIView(context: Context) -> UIView {
         let v = engine.surface
+        engine.attachSurface()
         if v.gestureRecognizers?.isEmpty ?? true { v.addGestureRecognizer(UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tapped))) }
         return v
     }
@@ -283,5 +330,16 @@ struct OfflineRouter: View {
     var body: some View {
         if Self.usesVlc(file) { VlcOfflinePlayer(file: file, title: title, subs: subs) }
         else { OfflinePlayer(file: file, title: title, subs: subs) }
+    }
+}
+
+/// Aviso sobre la imagen mientras VLC abre o carga el vídeo (si no, solo se ve el fondo negro y no se sabe si va bien).
+struct VlcStatusBadge: View {
+    @ObservedObject var engine: VlcEngine
+    var body: some View {
+        if !engine.statusText.isEmpty && !engine.isPlaying || engine.statusText.hasPrefix("suena") {
+            HStack(spacing: 8) { ProgressView().tint(.white); Text("VLC: \(engine.statusText)").font(.caption.bold()) }
+                .padding(.horizontal, 12).padding(.vertical, 8).background(.black.opacity(0.75), in: Capsule()).foregroundStyle(.white)
+        }
     }
 }

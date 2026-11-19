@@ -52,7 +52,10 @@ struct PlayerScreen: View {
     var body: some View {
         ZStack(alignment: .top) {
             Color.black.ignoresSafeArea()
-            if model.engine == .vlc { VlcVideoView(engine: model.vlc, onTap: { withAnimation { showBar = true }; scheduleHide() }).ignoresSafeArea(edges: full ? .all : []) }
+            if model.engine == .vlc {
+                VlcVideoView(engine: model.vlc, onTap: { withAnimation { showBar = true }; scheduleHide() }).ignoresSafeArea(edges: full ? .all : [])
+                VlcStatusBadge(engine: model.vlc)
+            }
             else if let player = model.player { FullscreenVideo(player: player, onTap: { withAnimation { showBar = true }; scheduleHide() }).ignoresSafeArea(edges: full ? .all : []) } else { ProgressView().tint(.white) }
             if AppSettings.ownSubtitles { SubtitleOverlay(text: model.subtitleText).ignoresSafeArea() }
             VStack(spacing: 0) {
