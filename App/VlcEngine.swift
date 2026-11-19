@@ -122,7 +122,7 @@ final class VlcEngine: NSObject, ObservableObject {
     func seek(to seconds: Double) {
         #if canImport(MobileVLCKit)
         // Antes de que arranque el vídeo VLC ignora el salto: se guarda y se aplica al empezar a sonar
-        guard isPlaying, durationSec > 0 else { pendingSeek = seconds; return }
+        guard durationSec > 0, positionSec > 0 else { pendingSeek = seconds; return }
         player.time = VLCTime(int: Int32(max(0, seconds) * 1000))
         #endif
     }
@@ -142,7 +142,7 @@ final class VlcEngine: NSObject, ObservableObject {
                 if n >= 6 && !self.player.hasVideoOut && self.isPlaying { self.statusText = "suena pero VLC no da imagen" }
                 // Solo audio: VLC reproduce el sonido pero no encuentra o no decodifica el vídeo (códec raro, pista de vídeo corrupta…).
                 // Se avisa como error para que la pantalla de servidores pida al servidor que lo recodifique.
-                if n >= 2, self.expectsVideo, self.player.isPlaying, self.player.time.intValue > 3000, !self.player.hasVideoOut, sz.width == 0 {
+                if n >= 2, self.expectsVideo, self.player.isPlaying, (self.player.time.intValue > 3000 || n >= 3), !self.player.hasVideoOut, sz.width == 0 {
                     Trace.shared.log("vlc", "FALLO: suena pero no hay imagen tras \(n * 5) s → se avisa como error")
                     self.failed = true; self.statusText = ""
                     self.errorText = "VLC no pudo decodificar el vídeo (solo se oía el audio)"
@@ -191,6 +191,8 @@ final class VlcEngine: NSObject, ObservableObject {
     /// (0 = negro, 1 = blanco) para saber sin mirar si hay imagen de verdad. Solo para las pruebas.
     func snapshot() async -> (jpeg: Data, brightness: Double)? {
         #if canImport(MobileVLCKit)
+        // Sin salida de vídeo (solo audio, o aún cargando) VLC no puede sacar fotograma y la llamada puede tumbar la app
+        guard player.hasVideoOut, player.videoSize.width > 0 else { return nil }
         let path = NSTemporaryDirectory() + "vlc_snap_\(Int(Date().timeIntervalSince1970)).png"
         player.saveVideoSnapshot(at: path, withWidth: 640, andHeight: 0)
         for _ in 0..<10 {
@@ -275,6 +277,12 @@ extension VlcEngine: VLCMediaPlayerDelegate {
             if self.player.isPlaying && self.positionSec > 0 && (!self.isPlaying || self.isBuffering || !self.statusText.isEmpty) { self.markPlaying() }
             let len = self.player.media?.length.intValue ?? 0
             if len > 0 { self.durationSec = Double(len) / 1000 }
+            // «Seguir viendo»: el salto pedido antes de arrancar se hace en cuanto VLC conoce la duración y ya suena
+            if let t = self.pendingSeek, self.durationSec > 0, self.positionSec > 0, self.player.isPlaying {
+                self.pendingSeek = nil
+                Trace.shared.log("vlc", "continúa en \(Int(t)) s")
+                self.player.time = VLCTime(int: Int32(max(0, t) * 1000))
+            }
             if self.audioChoices.isEmpty || self.subtitleChoices.isEmpty { self.refreshTracks() }   // las pistas aparecen unos instantes después de arrancar
         }
     }
@@ -337,10 +345,10 @@ struct VlcOfflinePlayer: View {
             if engine.isBuffering && !engine.isPlaying { ProgressView().tint(.white).frame(maxHeight: .infinity) }
             VStack {
                 HStack(spacing: 10) {
-                    Button { dismiss() } label: {
-                        Image(systemName: "chevron.left").font(.body.bold()).frame(width: 44, height: 44).background(.black.opacity(showBar ? 0.6 : 0.35), in: Circle())
-                    }
                     if showBar {
+                        Button { dismiss() } label: {
+                            Image(systemName: "chevron.left").font(.body.bold()).frame(width: 44, height: 44).background(.black.opacity(0.6), in: Circle())
+                        }
                         Text(title).font(.subheadline.bold()).lineLimit(1).padding(.horizontal, 10).padding(.vertical, 5).background(.black.opacity(0.55), in: Capsule())
                         Spacer()
                         if !engine.subtitleChoices.isEmpty || !subs.isEmpty {
@@ -362,6 +370,7 @@ struct VlcOfflinePlayer: View {
                 .foregroundStyle(.white).padding(.horizontal, 12).padding(.top, 76)
                 Spacer()
                 if let e = engine.errorText { Text(e).font(.caption).foregroundStyle(.red).padding(8).background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 8)).padding() }
+                if showBar { VlcTransportBar(engine: engine, onTouch: scheduleHide).padding(.horizontal, 16).padding(.bottom, 24) }
             }
         }
         .navigationBarBackButtonHidden(true)
@@ -408,6 +417,46 @@ struct VlcStatusBadge: View {
         if !engine.statusText.isEmpty && !engine.isPlaying || engine.statusText.hasPrefix("suena") {
             HStack(spacing: 8) { ProgressView().tint(.white); Text("VLC: \(engine.statusText)").font(.caption.bold()) }
                 .padding(.horizontal, 12).padding(.vertical, 8).background(.black.opacity(0.75), in: Capsule()).foregroundStyle(.white)
+        }
+    }
+}
+
+/// Mando de VLC: barra de avance con tiempo y duración, atrasar/adelantar 10 s y pausa. VLC no trae interfaz propia (el reproductor de Apple sí),
+/// así que sin esto con VLC no se podía saltar a otro punto de la película. En directos (sin duración) no sale.
+struct VlcTransportBar: View {
+    @ObservedObject var engine: VlcEngine
+    var onTouch: () -> Void = {}
+    @State private var dragging = false
+    @State private var dragValue = 0.0
+
+    private func clock(_ s: Double) -> String {
+        let t = Int(max(0, s)); let h = t / 3600, m = (t % 3600) / 60, sec = t % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, sec) : String(format: "%d:%02d", m, sec)
+    }
+
+    var body: some View {
+        if engine.durationSec > 0 {
+            VStack(spacing: 6) {
+                HStack(spacing: 10) {
+                    Text(clock(dragging ? dragValue : engine.positionSec)).font(.caption.monospacedDigit())
+                    Slider(value: Binding(get: { dragging ? dragValue : min(engine.positionSec, engine.durationSec) }, set: { dragValue = $0 }),
+                           in: 0...max(1, engine.durationSec)) { editing in
+                        dragging = editing
+                        if editing { dragValue = engine.positionSec } else { engine.seek(to: dragValue) }
+                        onTouch()
+                    }
+                    Text(clock(engine.durationSec)).font(.caption.monospacedDigit())
+                }
+                HStack(spacing: 34) {
+                    Button { engine.seek(to: max(0, engine.positionSec - 10)); onTouch() } label: { Image(systemName: "gobackward.10").font(.title2) }
+                    Button { if engine.isPlaying { engine.pause() } else { engine.resume() }; onTouch() } label: {
+                        Image(systemName: engine.isPlaying ? "pause.fill" : "play.fill").font(.title).frame(width: 44)
+                    }
+                    Button { engine.seek(to: min(engine.durationSec, engine.positionSec + 10)); onTouch() } label: { Image(systemName: "goforward.10").font(.title2) }
+                }
+            }
+            .foregroundStyle(.white).padding(.horizontal, 14).padding(.vertical, 10)
+            .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 14))
         }
     }
 }

@@ -46,6 +46,8 @@ final class RemoteControl: ObservableObject {
     @Published var playRequest: IptvChannel?
     /// Título de un servidor (Plex, Emby, Jellyfin) abierto por orden remota: pasa por la misma pantalla que al pulsar «Reproducir».
     @Published var serverPlayRequest: ServerPlayRequest?
+    /// Película descargada abierta por orden remota (misma pantalla que «Ver sin conexión»).
+    @Published var offlineRequest: OfflineRequest?
     private weak var store: PlaylistStore?
     private var running = false
 
@@ -82,7 +84,9 @@ final class RemoteControl: ObservableObject {
         case "resume": PlayerModel.current?.player?.play(); Trace.shared.log("remoto", "reanudar")
         case "playserver": playServer(cmd)
         case "screenshot": screenshot(cmd)
-        case "stop": playRequest = nil; serverPlayRequest = nil; Trace.shared.log("remoto", "reproductor cerrado")
+        case "playoffline": playOffline(cmd)
+        case "openin": OpenInPresenter.shared.present(DownloadManager.folder.appendingPathComponent(DownloadManager.shared.jobs.first { $0.fileName != nil }?.fileName ?? "x"))
+        case "stop": playRequest = nil; serverPlayRequest = nil; offlineRequest = nil; Trace.shared.log("remoto", "reproductor cerrado")
         case "dlclear": DownloadManager.shared.removeAll()
         case "setpref": for (k, v) in (cmd["values"] as? [String: Any]) ?? [:] { UserDefaults.standard.set(v, forKey: k) }; Trace.shared.log("remoto", "ajustes cambiados: \(((cmd["values"] as? [String: Any]) ?? [:]).keys.sorted())")
         case "trace":
@@ -184,6 +188,17 @@ final class RemoteControl: ObservableObject {
         _ = try? await URLSession.shared.data(for: req)
     }
 
+    /// `playoffline`: abre una película ya descargada (`query`: parte del título; vacío = la primera terminada).
+    private func playOffline(_ cmd: [String: Any]) {
+        let q = ((cmd["query"] as? String) ?? "").lowercased()
+        let done = DownloadManager.shared.jobs.filter { $0.fileName != nil && $0.state == "listo" }
+        guard let j = done.first(where: { q.isEmpty || $0.title.lowercased().contains(q) }), let f = j.fileName else {
+            Trace.shared.log("remoto", "playoffline: no hay descargas terminadas" + (q.isEmpty ? "" : " con «\(q)»")); return
+        }
+        Trace.shared.log("remoto", "playoffline: «\(j.title)» (\(f))")
+        offlineRequest = OfflineRequest(file: DownloadManager.folder.appendingPathComponent(f), title: j.title, subs: j.subs)
+    }
+
     private func play(_ cmd: [String: Any]) { playRequest = channel(from: cmd) }
 
     /// Busca un título en la mediateca cargada (por nombre y plataforma) y lo reproduce o lo descarga: prueba el camino real de la app.
@@ -252,4 +267,11 @@ struct ServerPlayRequest: Identifiable {
     let id = UUID()
     let backend: ServerBackend
     let item: EmbyItem
+}
+
+/// Petición remota de abrir una descarga.
+struct OfflineRequest: Identifiable {
+    let id = UUID()
+    let file: URL, title: String
+    var subs: [SubFile] = []
 }

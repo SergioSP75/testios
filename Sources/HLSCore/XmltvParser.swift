@@ -7,7 +7,7 @@ import Compression
 #endif
 
 /// Canal de la guía.
-public struct EpgChannel: Equatable {
+public struct EpgChannel: Equatable, Codable {
     public var id: String
     public var displayName: String?
     public var icon: String?

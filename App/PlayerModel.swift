@@ -45,6 +45,10 @@ final class PlayerModel: ObservableObject {
     private var fellBack = false
     /// Tope de altura que se pone solo si ni la resolución mínima ni «sin mínima» abren (p. ej. 4K Dolby Vision que el aparato no decodifica): 1080.
     private var capHeight = 0
+    /// Las pantallas lo activan cuando VLC ya falló con este título: a partir de ahí se usa el reproductor interno aunque VLC esté forzado.
+    private(set) var preferInternal = false
+    private var internalReason = ""
+    func useInternalPlayer(_ why: String) { preferInternal = true; internalReason = why }
     /// Ya se probó VLC tras un fallo de AVPlayer en este título (no se repite).
     private var fellBackToVlc = false
     /// Aviso mientras se prueba con otra pista porque la elegida no abre («Probando con otra pista…»); se quita solo al arrancar bien.
@@ -104,7 +108,14 @@ final class PlayerModel: ObservableObject {
 
         // Motor: ajuste del usuario + lo que se sabe del título. Los contenedores que AVPlayer no abre (AVI, FLAC, WMV…) van directos a VLC;
         // con «Siempre VLC» y sin DRM también (VLC lee HLS, DASH y ficheros por sí mismo). Con claves hace falta el relay que descifra.
-        let setting = EngineSetting(rawValue: AppSettings.engine) ?? .auto
+        let setting = preferInternal ? EngineSetting.avplayer : (EngineSetting(rawValue: AppSettings.engine) ?? .auto)
+        if preferInternal {
+            engineNote = internalReason
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 6_000_000_000)
+                if let self = self, self.startGen == gen { self.engineNote = nil }
+            }
+        }
         let ext = EngineChooser.fileExtension(of: url.absoluteString)
         if VlcEngine.isAvailable, clearKeys.isEmpty, engineFor(setting: setting, ext: ext) == .vlc, !VlcEngine.needsRelayForHeaders(headers) {
             startVlc(url: url, headers: headers, reason: setting == .vlc ? "motor VLC (ajuste)" : "VLC (formato .\(ext.isEmpty ? "?" : ext))")

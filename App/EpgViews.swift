@@ -100,7 +100,7 @@ struct EpgPanel: View {
         let past = s.stop <= clock.nowMs && !now
         let canCatchup = !(channel?.catchup ?? "").isEmpty || !(channel?.catchupSource ?? "").isEmpty
         return HStack(spacing: 10) {
-            if let u = s.program.icon ?? s.program.image, !u.isEmpty {
+            if let u = s.program.icon ?? s.program.image ?? s.program.fanart, !u.isEmpty {
                 PosterImage(url: u, maxPixel: 200) { Color.gray.opacity(0.15) }.frame(width: 70, height: 44).clipShape(RoundedRectangle(cornerRadius: 4))
             }
             VStack(alignment: .leading, spacing: 2) {
@@ -352,9 +352,17 @@ struct EpgGridView: View {
     private func programCell(_ ch: IptvChannel, _ s: EpgStore.Slot, width: CGFloat, _ t: AppTheme) -> some View {
         let now = s.start <= clock.nowMs && clock.nowMs < s.stop
         let selected = preview?.slot.id == s.id && preview?.ch.id == ch.id
-        return VStack(alignment: .leading, spacing: 2) {
-            Text(s.program.title).font(.caption.weight(now ? .bold : .regular)).lineLimit(1)
-            Text(EpgFormat.hour(s.start)).font(.caption2).foregroundStyle(now ? t.c(t.text2) : t.c(t.dim))
+        // Póster del programa en la celda (si la celda es lo bastante ancha y la guía trae imagen)
+        let poster = s.program.bestImage
+        return HStack(spacing: 6) {
+            if let u = poster, width >= 150 {
+                PosterImage(url: u, maxPixel: 160) { Color.gray.opacity(0.15) }
+                    .frame(width: 34, height: rowH - 14).clipShape(RoundedRectangle(cornerRadius: 3))
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(s.program.title).font(.caption.weight(now ? .bold : .regular)).lineLimit(poster != nil && width >= 150 ? 2 : 1)
+                Text(EpgFormat.hour(s.start)).font(.caption2).foregroundStyle(now ? t.c(t.text2) : t.c(t.dim))
+            }
         }
         .padding(.leading, 8).padding(.trailing, 4)
         .frame(width: max(1, width - 1), height: rowH - 1, alignment: .leading)

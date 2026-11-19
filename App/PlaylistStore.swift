@@ -170,10 +170,33 @@ final class PlaylistStore: ObservableObject {
 
     // MARK: - Guía de programación (EPG)
 
+    /// Fichero de la copia de la guía de una dirección (en la carpeta de cachés: el sistema puede borrarla si falta espacio, y no se copia a iCloud).
+    static func epgCacheFile(for url: String) -> URL {
+        var h: UInt64 = 5381
+        for b in url.utf8 { h = (h &* 33) &+ UInt64(b) }
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        return dir.appendingPathComponent("epg-\(String(h, radix: 16)).json")
+    }
+
     /// Descarga la guía XMLTV (gzip incluido) y se queda con los días atrás de Ajustes (para el catchup) y 36 h adelante de los canales de la lista.
-    func loadEpg(_ urlString: String) async {
+    /// Caché: la guía ya analizada se guarda en disco. Al abrir la app se carga esa copia al instante (sin descargar ni analizar) y solo se vuelve
+    /// a bajar si tiene más de 6 h o cambiaron los canales; entonces se enseña la copia vieja y se refresca por detrás. `force` salta la caché.
+    func loadEpg(_ urlString: String, force: Bool = false) async {
         guard let url = URL(string: urlString.components(separatedBy: ",")[0].trimmingCharacters(in: .whitespaces)) else {
             Trace.shared.log("guia", "dirección de guía no válida"); return
+        }
+        let signature = "\(channels.count)|\(AppSettings.epgDays)"
+        let cacheFile = Self.epgCacheFile(for: url.absoluteString)
+        let store0 = epg
+        if !force, let saved = try? Data(contentsOf: cacheFile) {
+            let meta = await Task.detached(priority: .utility) { store0.restore(saved) }.value
+            if let meta = meta {
+                epgReady = true
+                let ageMin = (Int64(Date().timeIntervalSince1970 * 1000) - meta.savedAtMs) / 60_000
+                Trace.shared.log("guia", "desde la copia guardada (hace \(ageMin) min, \(saved.count / 1024) KB)")
+                if ageMin < 6 * 60, meta.signature == signature { return }
+                Trace.shared.log("guia", "la copia está vieja o cambiaron los canales: se refresca por detrás")
+            }
         }
         Trace.shared.log("guia", "descargando \(url.absoluteString)")
         do {
@@ -187,6 +210,11 @@ final class PlaylistStore: ObservableObject {
                 store.load(xml: xml, windowStartMs: now - Int64(AppSettings.epgDays) * 86_400_000, windowEndMs: now + 36 * 3_600_000, wanted: wanted)
             }.value
             epgReady = true
+            // Copia en disco para la próxima vez
+            let winStart = now - Int64(AppSettings.epgDays) * 86_400_000, winEnd = now + 36 * 3_600_000
+            Task.detached(priority: .utility) {
+                if let d = store.snapshot(signature: signature, windowStartMs: winStart, windowEndMs: winEnd) { try? d.write(to: cacheFile, options: .atomic) }
+            }
             Trace.shared.log("guia", "cargada: \(xml.count) bytes; programa actual del primer canal: \(channels.first.flatMap { epg.current(for: $0)?.title } ?? "ninguno")")
         } catch {
             errorMessage = "No se pudo cargar la guía: \(error.localizedDescription)"

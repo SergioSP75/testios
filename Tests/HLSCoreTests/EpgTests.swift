@@ -64,4 +64,43 @@ final class EpgTests: XCTestCase {
         XCTAssertEqual(FuzzyMatcher.score(FuzzyMatcher.normalize("Cuatro TV"), FuzzyMatcher.normalize("cuatro")), 1.0)
         XCTAssertGreaterThan(FuzzyMatcher.score("telecinco 2", "telecinco"), 0.9)
     }
+
+    // MARK: - Caché en disco
+
+    func testCopiaGuardadaYRestauradaDaLoMismo() throws {
+        let a = EpgStore()
+        a.load(xml: Data(xml.utf8), windowStartMs: 0, windowEndMs: .max)
+        let data = try XCTUnwrap(a.snapshot(signature: "3|7", windowStartMs: 0, windowEndMs: 99, nowMs: 1234))
+        let b = EpgStore()
+        let meta = try XCTUnwrap(b.restore(data))
+        XCTAssertEqual(meta, EpgStore.SnapshotMeta(savedAtMs: 1234, signature: "3|7", windowStartMs: 0, windowEndMs: 99))
+        let ch = IptvChannel(id: "1", name: "La 1", url: "u", tvgId: "La1.es")
+        XCTAssertEqual(b.current(for: ch, now: t0 + 60_000)?.title, "Telediario")
+        XCTAssertEqual(b.current(for: ch, now: t0 + 60_000)?.icon, "https://i/td.jpg", "el póster viaja en la copia")
+        XCTAssertEqual(b.programs(for: ch, from: t0, to: t0 + 7_200_000).map { $0.title }, ["Telediario", "Cine"])
+        XCTAssertEqual(b.icon(for: ch), "https://i/la1.png")
+        XCTAssertEqual(b.resolve(IptvChannel(id: "3", name: "ANTENA 3 HD", url: "u")), "Antena3.es", "el emparejado por nombre sigue funcionando")
+        XCTAssertEqual(b.search("noticias").count, 1)
+    }
+
+    func testCopiaEstropeadaONuevaVersionNoToca() throws {
+        let a = EpgStore()
+        a.load(xml: Data(xml.utf8), windowStartMs: 0, windowEndMs: .max)
+        let b = EpgStore()
+        XCTAssertNil(b.restore(Data("esto no es json".utf8)))
+        XCTAssertNil(b.restore(Data(#"{"version":99,"meta":{"savedAtMs":0,"signature":"","windowStartMs":0,"windowEndMs":0},"channels":[],"programs":{}}"#.utf8)))
+        XCTAssertTrue(b.channels.isEmpty, "una copia mala no deja la guía a medias")
+        // y una restauración correcta sobre una guía ya cargada la sustituye entera
+        let data = try XCTUnwrap(a.snapshot(signature: "x", windowStartMs: 0, windowEndMs: 1))
+        let c = EpgStore()
+        c.load(xml: Data("<tv><channel id=\"Otro\"/></tv>".utf8), windowStartMs: 0, windowEndMs: .max)
+        XCTAssertNotNil(c.restore(data))
+        XCTAssertNotNil(c.channels["La1.es"]); XCTAssertNil(c.channels["Otro"])
+    }
+
+    func testCopiaVaciaEsValida() throws {
+        let a = EpgStore()
+        let data = try XCTUnwrap(a.snapshot(signature: "0", windowStartMs: 0, windowEndMs: 0))
+        XCTAssertNotNil(EpgStore().restore(data))
+    }
 }

@@ -124,7 +124,7 @@ struct EpgSettingsView: View {
                 TextField("Otra dirección XMLTV (opcional)", text: $custom).textInputAutocapitalization(.never).keyboardType(.URL).themedRow()
             }
             Section {
-                Button { Task { await store.loadEpg(custom.isEmpty ? (PlaylistStore.defaultEpgUrl ?? "") : custom) } } label: { Label("Recargar la guía ahora", systemImage: "arrow.clockwise") }.themedRow()
+                Button { Task { await store.loadEpg(custom.isEmpty ? (PlaylistStore.defaultEpgUrl ?? "") : custom, force: true) } } label: { Label("Recargar la guía ahora", systemImage: "arrow.clockwise") }.themedRow()
                 Text(store.epgReady ? "Guía cargada." : "Guía sin cargar.").font(.caption).foregroundStyle(themes.theme.c(themes.theme.dim)).themedRow()
             }
         }

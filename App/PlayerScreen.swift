@@ -65,6 +65,7 @@ struct PlayerScreen: View {
                     Text(model.qualityText).font(.caption2.monospacedDigit()).padding(.horizontal, 8).padding(.vertical, 3)
                         .background(.black.opacity(0.5), in: Capsule()).foregroundStyle(.white).frame(maxWidth: .infinity, alignment: .trailing).padding(8)
                 }
+                if model.engine == .vlc, showBar { VlcTransportBar(engine: model.vlc, onTouch: scheduleHide).padding(.horizontal, 16).padding(.bottom, 8) }
                 if let note = model.engineNote {
                     Label(note, systemImage: "info.circle").font(.caption2).padding(.horizontal, 10).padding(.vertical, 6)
                         .background(.orange.opacity(0.85), in: Capsule()).foregroundStyle(.black).padding(.bottom, 6)
@@ -79,9 +80,10 @@ struct PlayerScreen: View {
         }
         .onChange(of: model.engineNote) { n in if n == nil { withAnimation { showBar = false } } }     // pasado el aviso: vídeo a pantalla completa
         .navigationBarBackButtonHidden(full)
-        .toolbar(full ? .hidden : .visible, for: .navigationBar)
-        .statusBarHidden(full)
-        .persistentSystemOverlays(full ? .hidden : .automatic)
+        // Título y botón de cerrar solo al tocar la pantalla: con los controles ocultos queda solo el vídeo
+        .toolbar((full || !showBar) ? .hidden : .visible, for: .navigationBar)
+        .statusBarHidden(full || !showBar)
+        .persistentSystemOverlays((full || !showBar) ? .hidden : .automatic)
         .navigationTitle(channel.name)
         .task {
             guard let url = URL(string: channel.url) else { model.errorText = "dirección no válida"; return }

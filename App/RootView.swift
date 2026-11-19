@@ -14,6 +14,11 @@ struct RootView: View {
             }
         }
         .task { DownloadManager.shared.resume() }
+        .fullScreenCover(item: $remote.offlineRequest) { r in
+            NavigationStack {
+                OfflineRouter(file: r.file, title: r.title, subs: r.subs)
+            }
+        }
         .fullScreenCover(item: $remote.serverPlayRequest) { r in
             NavigationStack {
                 ServerPlayerScreen(backend: r.backend, item: r.item)

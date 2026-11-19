@@ -315,6 +315,7 @@ struct ServerPlayerScreen: View {
     @State private var info = ""
     @State private var tracks: [MkvToHls.TrackReport] = []
     @State private var tracksShown = false
+    @State private var internalTried = false
     @State private var showBar = true
     @State private var hideTask: Task<Void, Never>?
 
@@ -331,6 +332,7 @@ struct ServerPlayerScreen: View {
                 VStack(alignment: .leading, spacing: 6) {
                     if let note = model.engineNote { Label(note, systemImage: "info.circle").font(.caption2).foregroundStyle(.orange) }
                     if showBar {
+                        if model.engine == .vlc { VlcTransportBar(engine: model.vlc, onTouch: scheduleHide) }
                         HStack {
                             Spacer()
                             ExternalPlayerButton(urlProvider: { try? await backend.streamUrlFor(item, StreamParams()) }, iconOnly: true)
@@ -350,12 +352,21 @@ struct ServerPlayerScreen: View {
         .onChange(of: model.engineNote) { n in if n == nil { withAnimation { showBar = false } } }
         .themedScreen()
         .navigationTitle(item.name).navigationBarTitleDisplayMode(.inline)
+        // Título y botón de cerrar solo al tocar la pantalla: con los controles ocultos queda solo el vídeo
+        .toolbar(showBar ? .visible : .hidden, for: .navigationBar)
+        .statusBarHidden(!showBar)
+        .persistentSystemOverlays(showBar ? .automatic : .hidden)
         .task { await play(StreamParams()) }
         .onChange(of: model.errorText) { err in
             // Reintento único con recodificación del servidor
             if err != nil && !retried && AppSettings.mkvMode != "none" {
                 retried = true
                 Task { info = "El original no se reproduce («\(err ?? "")»). Probando recodificación del servidor…"; await play(StreamParams(mbps: 20)) }
+            } else if err != nil && retried && !internalTried && model.engine == .vlc {
+                // VLC tampoco con la recodificación del servidor: se pasa al reproductor interno (AVPlayer)
+                internalTried = true
+                model.useInternalPlayer("VLC no pudo con este vídeo: se usa el reproductor interno")
+                Task { info = "Probando con el reproductor interno…"; await play(StreamParams(mbps: 20)) }
             }
         }
         .onDisappear {

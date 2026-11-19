@@ -48,9 +48,40 @@ struct ExternalFileButton: View {
     let file: URL
     var iconOnly = false
     var body: some View {
-        ShareLink(item: file) {
+        Button { OpenInPresenter.shared.present(file) } label: {
             if iconOnly { Image(systemName: "arrow.up.forward.app").frame(width: 44, height: 44).background(.black.opacity(0.6), in: Circle()).foregroundStyle(.white) }
             else { Label("Abrir en otro reproductor", systemImage: "arrow.up.forward.app").font(.footnote) }
         }
+    }
+}
+
+/// Muestra el menú «Abrir en…» del sistema con las apps que saben abrir el fichero (VLC, Infuse, nPlayer…), anclado al centro de la pantalla.
+/// La hoja de compartir de SwiftUI no lo ofrecía dentro del reproductor a pantalla completa. Si ninguna app lo abre, se cae a compartir.
+@MainActor
+final class OpenInPresenter: NSObject, UIDocumentInteractionControllerDelegate {
+    static let shared = OpenInPresenter()
+    private var controller: UIDocumentInteractionController?
+
+    func present(_ file: URL) {
+        guard let top = Self.topViewController() else { return }
+        let rect = CGRect(x: top.view.bounds.midX, y: top.view.bounds.midY, width: 1, height: 1)
+        let c = UIDocumentInteractionController(url: file)
+        c.delegate = self
+        controller = c
+        if !c.presentOpenInMenu(from: rect, in: top.view, animated: true) {
+            let share = UIActivityViewController(activityItems: [file], applicationActivities: nil)
+            share.popoverPresentationController?.sourceView = top.view
+            share.popoverPresentationController?.sourceRect = rect
+            top.present(share, animated: true)
+        }
+    }
+
+    /// Pantalla que está más arriba ahora mismo (el reproductor va dentro de una pantalla modal).
+    private static func topViewController() -> UIViewController? {
+        let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first { $0.activationState == .foregroundActive }
+            ?? UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        var vc = scene?.windows.first(where: { $0.isKeyWindow })?.rootViewController
+        while let next = vc?.presentedViewController { vc = next }
+        return vc
     }
 }

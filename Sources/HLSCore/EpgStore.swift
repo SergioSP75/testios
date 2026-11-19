@@ -35,6 +35,42 @@ public final class EpgStore {
         return stats
     }
 
+    // MARK: - Caché en disco
+
+    /// Datos de la copia guardada: cuándo se hizo y para qué canales y ventana, para decidir si sirve o hay que refrescar.
+    public struct SnapshotMeta: Codable, Equatable {
+        public var savedAtMs: Int64
+        public var signature: String
+        public var windowStartMs: Int64
+        public var windowEndMs: Int64
+    }
+    private struct Entry: Codable { var start: Int64; var stop: Int64; var program: EpgProgram }
+    private struct Snapshot: Codable { var version: Int; var meta: SnapshotMeta; var channels: [EpgChannel]; var programs: [String: [Entry]] }
+    private static let snapshotVersion = 1
+
+    /// Guía ya analizada en un bloque de datos (JSON): se guarda en disco para no tener que descargar y analizar el XML cada vez.
+    public func snapshot(signature: String, windowStartMs: Int64, windowEndMs: Int64, nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) -> Data? {
+        lock.lock(); defer { lock.unlock() }
+        var progs: [String: [Entry]] = [:]
+        for (id, arr) in programs { progs[id] = arr.map { Entry(start: $0.start, stop: $0.stop, program: $0.program) } }
+        let meta = SnapshotMeta(savedAtMs: nowMs, signature: signature, windowStartMs: windowStartMs, windowEndMs: windowEndMs)
+        return try? JSONEncoder().encode(Snapshot(version: Self.snapshotVersion, meta: meta, channels: Array(channels.values), programs: progs))
+    }
+
+    /// Carga una copia guardada con `snapshot`. Devuelve sus datos, o nil si está estropeada o es de otra versión (entonces no se toca nada).
+    @discardableResult
+    public func restore(_ data: Data) -> SnapshotMeta? {
+        guard let s = try? JSONDecoder().decode(Snapshot.self, from: data), s.version == Self.snapshotVersion else { return nil }
+        lock.lock(); defer { lock.unlock() }
+        var chans: [String: EpgChannel] = [:]
+        for c in s.channels { chans[c.id] = c }
+        channels = chans
+        aliases = Self.buildAliases(chans)
+        resolveCache = [:]
+        programs = s.programs.mapValues { $0.map { (start: $0.start, stop: $0.stop, program: $0.program) } }
+        return s.meta
+    }
+
     // MARK: - Emparejado de canales
 
     private static func buildAliases(_ chans: [String: EpgChannel]) -> [String: String] {
