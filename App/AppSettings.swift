@@ -1,4 +1,5 @@
 import SwiftUI
+import HLSCore
 #if canImport(UIKit)
 import UIKit
 #endif

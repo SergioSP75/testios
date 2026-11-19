@@ -53,11 +53,12 @@ final class VlcEngine: NSObject, ObservableObject {
 
     /// Opciones de VLC: colchón y cabeceras. VLC 3 solo sabe enviar User-Agent, Referer y Cookie; cualquier otra cabecera
     /// (tokens, X-…) la pone el relay local, y PlayerModel entonces le da a VLC la dirección del relay en vez de la original.
-    static func options(headers: [String: String], networkCacheMs: Int) -> [String] {
-        var o = [":network-caching=\(networkCacheMs)", ":file-caching=\(min(networkCacheMs, 1500))", ":clock-jitter=0", ":clock-synchro=0"]
-        if let ua = RequestHeaders.value(headers, "User-Agent"), !ua.isEmpty { o.append(":http-user-agent=\(ua)") }
-        if let ref = RequestHeaders.value(headers, "Referer") ?? RequestHeaders.value(headers, "Referrer"), !ref.isEmpty { o.append(":http-referrer=\(ref)") }
-        if let cookie = RequestHeaders.value(headers, "Cookie"), !cookie.isEmpty { o.append(":http-cookie=\(cookie)") }
+    static func options(headers: [String: String], networkCacheMs: Int) -> [String: Any] {
+        // VLCMedia.addOptions antepone «:» a cada clave y escribe «clave=valor»
+        var o: [String: Any] = ["network-caching": networkCacheMs, "file-caching": min(networkCacheMs, 1500), "clock-jitter": 0, "clock-synchro": 0]
+        if let ua = RequestHeaders.value(headers, "User-Agent"), !ua.isEmpty { o["http-user-agent"] = ua }
+        if let ref = RequestHeaders.value(headers, "Referer") ?? RequestHeaders.value(headers, "Referrer"), !ref.isEmpty { o["http-referrer"] = ref }
+        if let cookie = RequestHeaders.value(headers, "Cookie"), !cookie.isEmpty { o["http-cookie"] = cookie }
         return o
     }
 
