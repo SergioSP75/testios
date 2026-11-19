@@ -114,6 +114,8 @@ struct PosterImage<Placeholder: View>: View {
     var maxPixel = 360
     /// true = la imagen entera dentro del marco (logos); false = rellena recortando (carátulas)
     var fit = false
+    /// true = carga con prioridad baja, para que no compita con el texto ni con el desplazamiento (guía)
+    var background = false
     @ViewBuilder var placeholder: () -> Placeholder
     @State private var image: UIImage?
 
@@ -129,7 +131,7 @@ struct PosterImage<Placeholder: View>: View {
         }
         .clipped()
         .contentShape(Rectangle())
-        .task(id: url) {
+        .task(id: url, priority: background ? .utility : .userInitiated) {
             guard let url, !url.isEmpty else { image = nil; return }
             image = await ImageLoader.shared.image(for: url, maxPixel: maxPixel)
         }

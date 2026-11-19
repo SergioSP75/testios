@@ -103,4 +103,13 @@ final class EpgTests: XCTestCase {
         let data = try XCTUnwrap(a.snapshot(signature: "0", windowStartMs: 0, windowEndMs: 0))
         XCTAssertNotNil(EpgStore().restore(data))
     }
+    func testBusquedaSinMayusculasNiTildesYConFiltro() {
+        let store = EpgStore()
+        store.load(xml: Data(xml.utf8), windowStartMs: t0 - 3_600_000, windowEndMs: t0 + 86_400_000)
+        XCTAssertEqual(store.search("TELEDIARIO").count, 1, "mayúsculas")
+        XCTAssertEqual(store.search("teledíario").count, 1, "las tildes no cuentan")
+        XCTAssertEqual(store.search("noticias").count, 1)
+        XCTAssertEqual(store.search("NOTICIAS", accept: { $0.channelId == "La1.es" }).count, 0, "el filtro descarta antes de contar")
+        XCTAssertEqual(store.search("cine", limit: 1, accept: { $0.channelId == "La1.es" }).count, 1)
+    }
 }

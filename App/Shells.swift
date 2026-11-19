@@ -271,14 +271,25 @@ struct SearchContent: View {
     @ObservedObject private var hub = MediaHub.shared
     @State private var query = ""
     var body: some View {
-        ScrollView {
-            if query.trimmingCharacters(in: .whitespaces).isEmpty {
-                Text("Escribe para buscar películas y series").foregroundStyle(.secondary).padding(.top, 40)
-            } else {
-                PosterGrid(items: hub.library.filter(query: query, sort: .name)).padding(.top)
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Buscar películas y series…", text: $query).textInputAutocapitalization(.never).autocorrectionDisabled()
+                if !query.isEmpty { Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }.buttonStyle(.plain) }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .background(.gray.opacity(0.18), in: Capsule())
+            .padding(.horizontal).padding(.vertical, 8)
+            ScrollView {
+                if query.trimmingCharacters(in: .whitespaces).isEmpty {
+                    Text("Escribe para buscar películas y series").foregroundStyle(.secondary).padding(.top, 40)
+                } else {
+                    let found = hub.library.filter(query: query, sort: .name)
+                    if found.isEmpty { Text("Sin resultados para «\(query)»").foregroundStyle(.secondary).padding(.top, 40) }
+                    else { PosterGrid(items: found).padding(.top) }
+                }
             }
         }
-        .searchable(text: $query)
         .navigationTitle("Buscar")
         .task { await hub.loadAll() }
     }

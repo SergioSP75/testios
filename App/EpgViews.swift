@@ -151,6 +151,8 @@ struct EpgGridView: View {
     @State private var followNow = true
     @State private var kick = 0
     @State private var offsetX: CGFloat = 0
+    /// Los pósteres se activan un momento después de pintar la guía: primero sale el texto y luego las imágenes, solo de las celdas visibles.
+    @State private var postersOn = false
     @State private var rows: [IptvChannel] = []
     @State private var guideToChannel: [String: IptvChannel] = [:]
     @State private var preview: (ch: IptvChannel, slot: EpgStore.Slot)?
@@ -341,22 +343,27 @@ struct EpgGridView: View {
     }
 
     private func programRow(_ ch: IptvChannel, _ t: AppTheme) -> some View {
-        HStack(spacing: 0) {
+        // LazyHStack: solo se construyen las celdas que se ven (y, con ellas, sus pósteres); antes se hacían todas las de varios días
+        LazyHStack(spacing: 0) {
             ForEach(cells(ch)) { c in
                 if let s = c.slot { programCell(ch, s, width: c.width, t) } else { Color.clear.frame(width: c.width, height: rowH) }
             }
         }
-        .frame(height: rowH, alignment: .leading)
+        .frame(width: CGFloat(windowHours * 2) * slotW, height: rowH, alignment: .leading)
+        .task {
+            // Primero el texto: los pósteres empiezan a cargarse 0,6 s después de que la guía esté en pantalla
+            if !postersOn { try? await Task.sleep(nanoseconds: 600_000_000); postersOn = true }
+        }
     }
 
     private func programCell(_ ch: IptvChannel, _ s: EpgStore.Slot, width: CGFloat, _ t: AppTheme) -> some View {
         let now = s.start <= clock.nowMs && clock.nowMs < s.stop
         let selected = preview?.slot.id == s.id && preview?.ch.id == ch.id
-        // Póster del programa en la celda (si la celda es lo bastante ancha y la guía trae imagen)
-        let poster = s.program.bestImage
+        // Póster de cualquier celda visible (la fila es perezosa), pero solo cuando el texto ya está pintado
+        let poster = postersOn ? s.program.bestImage : nil
         return HStack(spacing: 6) {
             if let u = poster, width >= 150 {
-                PosterImage(url: u, maxPixel: 160) { Color.gray.opacity(0.15) }
+                PosterImage(url: u, maxPixel: 160, background: true) { Color.gray.opacity(0.15) }
                     .frame(width: 34, height: rowH - 14).clipShape(RoundedRectangle(cornerRadius: 3))
             }
             VStack(alignment: .leading, spacing: 2) {
@@ -413,20 +420,40 @@ struct EpgGridView: View {
     // MARK: Búsqueda
 
     @State private var query = ""
-    private var results: [(EpgProgram, IptvChannel, Int64)] {
+    @State private var results: [(EpgProgram, IptvChannel, Int64)] = []
+    @State private var searching = false
+
+    /// Busca en la guía fuera del hilo principal (la guía tiene decenas de miles de programas) y espera un instante a que se termine de teclear.
+    private func runSearch() async {
         let q = query.trimmingCharacters(in: .whitespaces)
-        guard q.count >= 3 else { return [] }
-        return store.epg.search(q, limit: 80).compactMap { p in
-            guard let ch = guideToChannel[p.channelId], let ms = EpgTime.parseMillis(p.start) else { return nil }
-            return (p, ch, ms)
-        }.sorted { $0.2 < $1.2 }
+        guard q.count >= 2 else { results = []; searching = false; return }
+        searching = true
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        if Task.isCancelled { return }
+        let map = guideToChannel, epg = store.epg
+        let found = await Task.detached(priority: .userInitiated) { () -> [(EpgProgram, IptvChannel, Int64)] in
+            epg.search(q, limit: 80, accept: { map[$0.channelId] != nil }).compactMap { p in
+                guard let ch = map[p.channelId], let ms = EpgTime.parseMillis(p.start) else { return nil }
+                return (p, ch, ms)
+            }.sorted { $0.2 < $1.2 }
+        }.value
+        if Task.isCancelled { return }
+        results = found; searching = false
     }
 
     private var searchSheet: some View {
         let t = themes.theme
         return NavigationStack {
             List {
-                if query.count < 3 { Text("Escribe al menos 3 letras").foregroundStyle(t.c(t.dim)).listRowBackground(t.c(t.card)) }
+                // Campo de texto siempre visible (el buscador de la barra de navegación no se veía en algunas pantallas)
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(t.c(t.dim))
+                    TextField("Buscar programa…", text: $query).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    if !query.isEmpty { Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(t.c(t.dim)) }.buttonStyle(.plain) }
+                }.listRowBackground(t.c(t.card))
+                if query.trimmingCharacters(in: .whitespaces).count < 2 { Text("Escribe al menos 2 letras").foregroundStyle(t.c(t.dim)).listRowBackground(t.c(t.card)) }
+                else if searching { HStack { ProgressView(); Text("Buscando…").foregroundStyle(t.c(t.dim)) }.listRowBackground(t.c(t.card)) }
+                else if results.isEmpty { Text("Sin resultados para «\(query)»").foregroundStyle(t.c(t.dim)).listRowBackground(t.c(t.card)) }
                 ForEach(Array(results.enumerated()), id: \.offset) { _, r in
                     Button {
                         // Lleva la rejilla a ese programa
@@ -442,7 +469,7 @@ struct EpgGridView: View {
                 }
             }
             .scrollContentBackground(.hidden).background(t.c(t.panel))
-            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Buscar programa")
+            .task(id: query) { await runSearch() }
             .navigationTitle("Buscar en la guía").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Cerrar") { showSearch = false } } }
         }

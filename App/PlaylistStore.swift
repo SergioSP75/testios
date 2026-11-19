@@ -189,8 +189,10 @@ final class PlaylistStore: ObservableObject {
         let cacheFile = Self.epgCacheFile(for: url.absoluteString)
         let store0 = epg
         if !force, let saved = try? Data(contentsOf: cacheFile) {
+            let t0 = Date()
             let meta = await Task.detached(priority: .utility) { store0.restore(saved) }.value
             if let meta = meta {
+                Trace.shared.log("guia", "copia leída en \(Int(Date().timeIntervalSince(t0) * 1000)) ms")
                 epgReady = true
                 let ageMin = (Int64(Date().timeIntervalSince1970 * 1000) - meta.savedAtMs) / 60_000
                 Trace.shared.log("guia", "desde la copia guardada (hace \(ageMin) min, \(saved.count / 1024) KB)")

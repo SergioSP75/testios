@@ -156,14 +156,18 @@ public final class EpgStore {
     /// Identificador de la guía → sirve para saber de qué canal es un resultado de búsqueda.
     public func guideId(for channel: IptvChannel) -> String? { resolve(channel) }
 
-    /// Búsqueda por título en toda la guía cargada.
-    public func search(_ query: String, limit: Int = 50) -> [EpgProgram] {
+    /// Búsqueda por título en toda la guía cargada, sin importar mayúsculas, minúsculas ni tildes («epoca» encuentra «Época»).
+    /// `accept` deja pasar solo los programas que interesan (p. ej. los de canales de la lista) ANTES de contar contra el límite:
+    /// si no, las primeras coincidencias podían ser de canales que no están en la lista y no salía nada.
+    public func search(_ query: String, limit: Int = 50, accept: ((EpgProgram) -> Bool)? = nil) -> [EpgProgram] {
         let q = query.trimmingCharacters(in: .whitespaces)
         if q.isEmpty { return [] }
+        let opts: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
         lock.lock(); defer { lock.unlock() }
         var out: [EpgProgram] = []
         for (_, arr) in programs {
-            for e in arr where e.program.title.localizedCaseInsensitiveContains(q) {
+            for e in arr where e.program.title.range(of: q, options: opts) != nil {
+                if let accept = accept, !accept(e.program) { continue }
                 out.append(e.program); if out.count >= limit { return out }
             }
         }
