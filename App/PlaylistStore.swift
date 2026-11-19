@@ -139,13 +139,39 @@ final class PlaylistStore: ObservableObject {
             let start = String(text.prefix(40)).replacingOccurrences(of: "\n", with: " ")
             Trace.shared.log("lista", "«\(playlist.name)» HTTP \(status) · \(data.count) bytes · empieza por: \(start)")
             let parsed = M3uParser.parse(text)
-            channels = parsed.channels
+            channels = await expandSublists(parsed.channels, depth: 0)
             Trace.shared.log("lista", "«\(playlist.name)»: \(parsed.channels.count) canales · guía: \(parsed.epgUrl ?? Self.defaultEpgUrl ?? "ninguna")")
             if let guide = parsed.epgUrl ?? Self.defaultEpgUrl { Task { await loadEpg(guide) } }
         } catch {
             errorMessage = "No se pudo cargar la lista: \(error.localizedDescription)"
             Trace.shared.log("lista", "ERROR «\(playlist.name)»: \(error.localizedDescription)")
         }
+    }
+
+    /// Listas anidadas (entradas con type="playlist"): se descarga cada una y sus canales se añaden en un grupo con el nombre de la
+    /// sublista (o «sublista - grupo» si traen grupo propio), como en Android. Hasta dos niveles; un fallo de una sublista no tumba el resto.
+    private func expandSublists(_ list: [IptvChannel], depth: Int) async -> [IptvChannel] {
+        guard list.contains(where: { $0.isPlaylistGroup }) else { return list }
+        var out = list.filter { !$0.isPlaylistGroup }
+        for sub in list where sub.isPlaylistGroup {
+            guard depth < 2, let u = Self.resolve(sub.nestedUrl ?? sub.url) else { continue }
+            do {
+                var req = URLRequest(url: u)
+                if !u.isFileURL { req.setValue(DeviceId.playlistUserAgent, forHTTPHeaderField: "User-Agent") }
+                let (data, _) = try await URLSession.shared.data(for: req)
+                let parsed = M3uParser.parse(String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self))
+                var inner = await expandSublists(parsed.channels, depth: depth + 1)
+                for i in inner.indices {
+                    let g = inner[i].group ?? ""
+                    inner[i].group = g.isEmpty ? sub.name : "\(sub.name) - \(g)"
+                }
+                Trace.shared.log("lista", "sublista «\(sub.name)»: \(inner.count) canales")
+                out += inner
+            } catch {
+                Trace.shared.log("lista", "ERROR sublista «\(sub.name)»: \(error.localizedDescription)")
+            }
+        }
+        return out
     }
 
     // MARK: - Guía de programación (EPG)
