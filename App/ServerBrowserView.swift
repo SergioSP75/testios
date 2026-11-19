@@ -315,18 +315,39 @@ struct ServerPlayerScreen: View {
     @State private var info = ""
     @State private var tracks: [MkvToHls.TrackReport] = []
     @State private var tracksShown = false
+    @State private var showBar = true
+    @State private var hideTask: Task<Void, Never>?
+
+    /// Los botones del reproductor se esconden solos a los 4 s; al tocar la imagen vuelven.
+    private func scheduleHide() {
+        hideTask?.cancel()
+        hideTask = Task { try? await Task.sleep(nanoseconds: 4_000_000_000); if !Task.isCancelled { withAnimation { showBar = false } } }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            ModelVideo(model: model).frame(maxHeight: .infinity).background(Color.black)
+            ZStack(alignment: .bottom) {
+                ModelVideo(model: model, onTap: { withAnimation { showBar.toggle() }; if showBar { scheduleHide() } }).background(Color.black)
+                VStack(alignment: .leading, spacing: 6) {
+                    if let note = model.engineNote { Label(note, systemImage: "info.circle").font(.caption2).foregroundStyle(.orange) }
+                    if showBar {
+                        HStack {
+                            Spacer()
+                            ExternalPlayerButton(urlProvider: { try? await backend.streamUrlFor(item, StreamParams()) }, iconOnly: true)
+                            TrackMenus(model: model)
+                            AudioDelayButton(applied: $model.audioDelayMs, apply: model.setAudioDelay).foregroundStyle(.white)
+                        }
+                        Text(info.isEmpty ? model.status : info).font(.caption).foregroundStyle(.white.opacity(0.7))
+                    }
+                    if let e = model.errorText { Text(e).font(.caption).foregroundStyle(.red) }
+                }
+                .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+                .background(showBar ? Color.black.opacity(0.55) : Color.clear)
+            }.frame(maxHeight: .infinity)
             if !tracks.isEmpty { MkvTracksPanel(tracks: tracks).onTapGesture { withAnimation { tracks = [] } }.transition(.opacity) }
-            HStack { Spacer(); ExternalPlayerButton(urlProvider: { try? await backend.streamUrlFor(item, StreamParams()) }, iconOnly: true); TrackMenus(model: model); AudioDelayButton(applied: $model.audioDelayMs, apply: model.setAudioDelay).foregroundStyle(.white) }.padding(.horizontal, 8)
-            VStack(alignment: .leading, spacing: 4) {
-                if let note = model.engineNote { Label(note, systemImage: "info.circle").font(.caption2).foregroundStyle(.orange) }
-                Text(info.isEmpty ? model.status : info).font(.caption).foregroundStyle(.secondary)
-                if let e = model.errorText { Text(e).font(.caption).foregroundStyle(.red) }
-            }.padding(8).frame(maxWidth: .infinity, alignment: .leading)
         }
+        .onAppear { scheduleHide() }
+        .onChange(of: model.engineNote) { n in if n == nil { withAnimation { showBar = false } } }
         .themedScreen()
         .navigationTitle(item.name).navigationBarTitleDisplayMode(.inline)
         .task { await play(StreamParams()) }

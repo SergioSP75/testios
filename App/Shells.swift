@@ -155,9 +155,11 @@ struct CatalogContent: View {
     let series: Bool
     let style: AppStyle
     @ObservedObject private var hub = MediaHub.shared
+    @ObservedObject private var progress = MediaProgress.shared
     @State private var platform: String?
     @State private var genre: String?
     @State private var search = ""
+    @State private var continueItems: [MediaItem] = []
     @State private var sort = MediaSort.added
     @AppStorage("media.view") private var viewRaw = MediaViewMode.grid.rawValue      // cuadrícula por defecto
     @State private var list: [MediaItem] = []
@@ -167,7 +169,7 @@ struct CatalogContent: View {
     @EnvironmentObject var themes: ThemeStore
 
     private var mode: MediaViewMode { MediaViewMode(rawValue: viewRaw) ?? .grid }
-    private var key: String { "\(hub.library.items.count)|\(platform ?? "")|\(genre ?? "")|\(search)|\(sort)|\(series)|\(viewRaw)" }
+    private var key: String { "\(progress.entries.count)|\(hub.library.items.count)|\(platform ?? "")|\(genre ?? "")|\(search)|\(sort)|\(series)|\(viewRaw)" }
     /// Filas por género solo si se elige «Filas» y no hay ningún filtro; en cuadrícula o lista siempre se ve todo el catálogo.
     private var showRows: Bool { mode == .rows && platform == nil && genre == nil && search.isEmpty }
 
@@ -175,6 +177,8 @@ struct CatalogContent: View {
         let lib = hub.library
         platforms = lib.platforms(series: series)
         genres = lib.genres(series: series, platformKey: platform)
+        // «Seguir viendo» de esta mediateca (películas o series, según la pestaña)
+        continueItems = progress.continueKeys.compactMap { hub.item(forKey: $0) }.filter { $0.isSeries == series }
         if showRows {
             genreRows = lib.genres(series: series, platformKey: nil).prefix(10).map { g in (g, Array(lib.filter(series: series, genre: g.key, sort: sort).prefix(30))) }
             list = []
@@ -191,8 +195,10 @@ struct CatalogContent: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 14) {
                 if hub.loading { HStack { ProgressView(); Text(hub.status).font(.caption).foregroundStyle(.secondary) }.padding(.horizontal) }
+                // Buscador dentro de la propia mediateca (siempre visible, sin cambiar de pestaña)
+                searchField
                 FacetChips(facets: platforms, selected: $platform, allLabel: "Todas las plataformas")
-                FacetChips(facets: genres, selected: $genre, allLabel: "Todos los géneros")
+                genreMenu
                 // Orden (9 criterios) y forma de ver: cuadrícula, lista con sinopsis o filas por género
                 HStack {
                     Menu {
@@ -203,6 +209,9 @@ struct CatalogContent: View {
                         ForEach(MediaViewMode.allCases, id: \.rawValue) { Image(systemName: $0.icon).tag($0.rawValue) }
                     }.pickerStyle(.segmented).frame(width: 150)
                 }.padding(.horizontal)
+                if search.isEmpty, platform == nil, genre == nil, !continueItems.isEmpty {
+                    Carousel(title: "Seguir viendo", items: continueItems)
+                }
                 if showRows {
                     ForEach(genreRows, id: \.0.id) { g, items in Carousel(title: g.label, items: items, all: allOf(g)) }
                 } else {
@@ -211,9 +220,49 @@ struct CatalogContent: View {
                 }
             }.padding(.vertical)
         }
-        .searchable(text: $search)
         .task { await hub.loadAll() }
         .task(id: key) { recompute() }
+    }
+
+    /// Campo de búsqueda visible arriba de la mediateca.
+    private var searchField: some View {
+        let t = themes.theme
+        return HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass").foregroundStyle(t.c(t.dim))
+            TextField("Buscar en \(series ? "series" : "películas")…", text: $search)
+                .textInputAutocapitalization(.never).autocorrectionDisabled().submitLabel(.search)
+                .foregroundStyle(t.c(t.text))
+            if !search.isEmpty {
+                Button { search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(t.c(t.dim)) }.buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .background(t.c(t.card), in: RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal)
+    }
+
+    /// Géneros en una lista desplegable (con scroll si es larga) en vez de una tira de botones.
+    private var genreMenu: some View {
+        let t = themes.theme
+        let current = genres.first { $0.key == genre }
+        return HStack {
+            Menu {
+                Button { genre = nil } label: { Label("Todos los géneros", systemImage: genre == nil ? "checkmark" : "") }
+                ForEach(genres) { g in
+                    Button { genre = (genre == g.key) ? nil : g.key } label: { Label("\(g.label) · \(g.count)", systemImage: genre == g.key ? "checkmark" : "") }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "line.3.horizontal.decrease.circle")
+                    Text(current.map { "\($0.label) · \($0.count)" } ?? "Todos los géneros").lineLimit(1)
+                    Image(systemName: "chevron.up.chevron.down").font(.caption2)
+                }
+                .font(.footnote).padding(.horizontal, 12).padding(.vertical, 8)
+                .background(genre == nil ? t.c(t.card) : t.accentColor, in: Capsule())
+                .foregroundStyle(genre == nil ? t.c(t.text2) : Color.black)
+            }
+            Spacer()
+        }.padding(.horizontal)
     }
 }
 

@@ -13,6 +13,8 @@ final class PlayerModel: ObservableObject {
     @Published private(set) var engine: PlaybackEngine = .avplayer
     /// Aviso permanente sobre el motor («VLC no abre contenido con claves: se usa el reproductor interno»); nil si no hay nada que avisar.
     @Published private(set) var engineNote: String?
+    /// VLC estaba forzado pero hubo que usar el reproductor interno: la resolución fija se esconde, que no quede nada pegado a la imagen.
+    private(set) var forcedFallback = false
     /// VLC: se crea la primera vez que hace falta (la librería es pesada).
     private(set) lazy var vlc = VlcEngine()
     private var vlcSinks: [AnyCancellable] = []
@@ -41,6 +43,8 @@ final class PlayerModel: ObservableObject {
     private var subtitleLogged = false
     /// Si con la resolución mínima de Ajustes no abre, se vuelve a intentar sin ella (una sola vez).
     private var fellBack = false
+    /// Tope de altura que se pone solo si ni la resolución mínima ni «sin mínima» abren (p. ej. 4K Dolby Vision que el aparato no decodifica): 1080.
+    private var capHeight = 0
     /// Ya se probó VLC tras un fallo de AVPlayer en este título (no se repite).
     private var fellBackToVlc = false
     /// Aviso mientras se prueba con otra pista porque la elegida no abre («Probando con otra pista…»); se quita solo al arrancar bien.
@@ -88,12 +92,12 @@ final class PlayerModel: ObservableObject {
         headers = RequestHeaders.merge(headers, ServerHeaders.forUrl(url.absoluteString))        // cabeceras propias de los servidores
         lastStart = (url, headers, clearKeys)
         PlayerModel.current = self
-        if minHeight == nil, fixedHeight == 0 { fellBack = false; fellBackToVlc = false }
+        if minHeight == nil, fixedHeight == 0 { fellBack = false; fellBackToVlc = false; capHeight = 0 }
         if minHeight == nil, fixedHeight == 0, audioGroup == nil { triedGroups = []; notice = nil }
         if audioGroup == nil, minHeight == nil, fixedHeight == 0 { chosenAudioGroup = nil }      // arranque nuevo: sin grupo forzado
         else if audioGroup != nil { chosenAudioGroup = audioGroup }
         stop()
-        engineNote = nil
+        engineNote = nil; forcedFallback = false
         startGen += 1; let gen = startGen
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         try? AVAudioSession.sharedInstance().setActive(true)
@@ -107,7 +111,7 @@ final class PlayerModel: ObservableObject {
             return
         }
 
-        let plan = await RelayManager.shared.plan(url: url, headers: headers, clearKeys: clearKeys, fixedHeight: fixedHeight, minHeight: minHeight, audioGroup: chosenAudioGroup)
+        let plan = await RelayManager.shared.plan(url: url, headers: headers, clearKeys: clearKeys, fixedHeight: fixedHeight > 0 ? fixedHeight : capHeight, minHeight: minHeight, audioGroup: chosenAudioGroup)
         // Otro arranque (otro canal) se adelantó mientras se preparaba este: se descarta
         guard gen == startGen else { RelayManager.shared.end(plan); return }
         self.plan = plan
@@ -117,6 +121,12 @@ final class PlayerModel: ObservableObject {
             if setting == .vlc && isDrm {
                 engineNote = "VLC no abre contenido con claves (ClearKey/DRM): se usa el reproductor interno"
                 Trace.shared.log("vlc", "forzado a VLC pero hay claves/DRM → reproductor interno")
+                forcedFallback = true
+                // El aviso se queda 6 s y se quita solo; entonces la pantalla se queda solo con el vídeo
+                Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: 6_000_000_000)
+                    if let self = self, self.startGen == gen { self.engineNote = nil }
+                }
             }
             let wantsVlc = (setting == .vlc && !isDrm) || (setting == .auto && !plan.viaRelay && plan.reason.hasPrefix("MKV directo"))
             if wantsVlc {
@@ -168,6 +178,12 @@ final class PlayerModel: ObservableObject {
                         self.fellBack = true
                         Trace.shared.log("avplayer", "no abre con resolución mínima \(AppSettings.minHeight)p: se reintenta sin ella")
                         self.notice = "Probando con otra pista…"
+                        await self.start(url: a.0, headers: a.1, clearKeys: a.2, fixedHeight: 0, minHeight: 0)
+                    } else if plan.viaRelay, self.capHeight == 0, fixedHeight == 0, self.chosenHeight == 0, let a = self.lastStart {
+                        // Aún con todas las variantes disponibles se elige la más alta (4K, Dolby Vision…) y no abre: se limita a 1080
+                        self.capHeight = 1080
+                        self.notice = "Probando con 1080p…"
+                        Trace.shared.log("avplayer", "no abre en la resolución más alta: se limita a 1080p")
                         await self.start(url: a.0, headers: a.1, clearKeys: a.2, fixedHeight: 0, minHeight: 0)
                     } else if plan.viaRelay, let a = self.lastStart, let next = self.nextGroupToTry() {
                         // Como en Android: si la pista elegida no abre en este aparato (-11848 «el contenido no se puede usar»…), se prueba con otra
@@ -291,7 +307,10 @@ final class PlayerModel: ObservableObject {
         status = "reproduciendo por: \(reason)"
         notice = nil
         Trace.shared.log("vlc", reason)
-        vlc.play(url: url, headers: headers, bufferSeconds: AppSettings.bufferSeconds)
+        // En música no hay imagen que esperar
+        let ext = EngineChooser.fileExtension(of: url.absoluteString)
+        let audioOnly = ["mp3", "flac", "wav", "aac", "m4a", "ogg", "opus", "wma", "ac3", "dts"].contains(ext)
+        vlc.play(url: url, headers: headers, bufferSeconds: AppSettings.bufferSeconds, expectsVideo: !audioOnly)
     }
 
     /// Vuelve a leer qué pistas hay y cuál está elegida (al abrir y cada vez que cambia la selección).

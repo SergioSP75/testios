@@ -37,6 +37,8 @@ final class VlcEngine: NSObject, ObservableObject {
     private var pendingSeek: Double?
     private var lastLoggedState = -1
     private var healthTask: Task<Void, Never>?
+    /// ¿Se espera imagen? (falso en música). Si suena pero no hay imagen en 10 s, se da por fallo para que la app pruebe otro camino.
+    private var expectsVideo = true
 
     /// Superficie donde VLC pinta el vídeo (la pone VlcVideoView).
     let surface = VlcSurfaceView()
@@ -78,7 +80,8 @@ final class VlcEngine: NSObject, ObservableObject {
         headers.keys.contains { !["user-agent", "referer", "referrer", "cookie", "range"].contains($0.lowercased()) }
     }
 
-    func play(url: URL, headers: [String: String], bufferSeconds: Double) {
+    func play(url: URL, headers: [String: String], bufferSeconds: Double, expectsVideo: Bool = true) {
+        self.expectsVideo = expectsVideo
         #if canImport(MobileVLCKit)
         stop()
         failed = false; errorText = nil; statusText = "abriendo…"
@@ -137,6 +140,14 @@ final class VlcEngine: NSObject, ObservableObject {
                 let sz = self.player.videoSize
                 Trace.shared.log("vlc", "salud \(n * 5)s · estado=\(self.player.state.rawValue) sonando=\(self.player.isPlaying) imagen=\(self.player.hasVideoOut) tamaño=\(Int(sz.width))x\(Int(sz.height)) t=\(self.player.time.intValue / 1000)s dur=\(self.durationSec)s audios=\(self.audioChoices.count) subs=\(self.subtitleChoices.count) superficie=\(Int(self.surface.bounds.width))x\(Int(self.surface.bounds.height)) enVentana=\(self.surface.window != nil)")
                 if n >= 6 && !self.player.hasVideoOut && self.isPlaying { self.statusText = "suena pero VLC no da imagen" }
+                // Solo audio: VLC reproduce el sonido pero no encuentra o no decodifica el vídeo (códec raro, pista de vídeo corrupta…).
+                // Se avisa como error para que la pantalla de servidores pida al servidor que lo recodifique.
+                if n >= 2, self.expectsVideo, self.player.isPlaying, self.player.time.intValue > 3000, !self.player.hasVideoOut, sz.width == 0 {
+                    Trace.shared.log("vlc", "FALLO: suena pero no hay imagen tras \(n * 5) s → se avisa como error")
+                    self.failed = true; self.statusText = ""
+                    self.errorText = "VLC no pudo decodificar el vídeo (solo se oía el audio)"
+                    return
+                }
                 #endif
             }
         }

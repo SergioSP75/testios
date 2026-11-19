@@ -61,7 +61,7 @@ struct PlayerScreen: View {
             VStack(spacing: 0) {
                 topBar
                 Spacer()
-                if !showBar, AppSettings.qualityAlways, !model.qualityText.isEmpty {
+                if !showBar, AppSettings.qualityAlways, !model.forcedFallback, !model.qualityText.isEmpty {
                     Text(model.qualityText).font(.caption2.monospacedDigit()).padding(.horizontal, 8).padding(.vertical, 3)
                         .background(.black.opacity(0.5), in: Capsule()).foregroundStyle(.white).frame(maxWidth: .infinity, alignment: .trailing).padding(8)
                 }
@@ -77,6 +77,7 @@ struct PlayerScreen: View {
                 }
             }
         }
+        .onChange(of: model.engineNote) { n in if n == nil { withAnimation { showBar = false } } }     // pasado el aviso: vídeo a pantalla completa
         .navigationBarBackButtonHidden(full)
         .toolbar(full ? .hidden : .visible, for: .navigationBar)
         .statusBarHidden(full)
