@@ -38,7 +38,7 @@ final class VlcEngine: NSObject, ObservableObject {
     private var healthTask: Task<Void, Never>?
 
     /// Superficie donde VLC pinta el vídeo (la pone VlcVideoView).
-    let surface = UIView()
+    let surface = VlcSurfaceView()
 
     #if canImport(MobileVLCKit)
     private let player = VLCMediaPlayer()
@@ -225,6 +225,19 @@ extension VlcEngine: VLCMediaPlayerDelegate {
     }
 }
 #endif
+
+/// Superficie donde pinta VLC. VLC mete su capa de vídeo como subvista con el tamaño que tenía la superficie al arrancar: si SwiftUI aún no la
+/// había medido (tamaño 0), el vídeo suena pero no se ve. Aquí cada subvista se ajusta al tamaño real en cuanto se conoce y en cada cambio.
+final class VlcSurfaceView: UIView {
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        for v in subviews where v.frame != bounds { v.frame = bounds }
+    }
+    override func didAddSubview(_ subview: UIView) {
+        super.didAddSubview(subview)
+        setNeedsLayout()
+    }
+}
 
 /// Vista SwiftUI de la superficie de VLC.
 struct VlcVideoView: UIViewRepresentable {
