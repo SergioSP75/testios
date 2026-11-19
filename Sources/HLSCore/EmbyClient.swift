@@ -59,6 +59,7 @@ public final class EmbyClient: ServerBackend {
         var h = headers
         ServerUa.remember(url)
         h["User-Agent"] = userAgent(); h["Accept"] = "application/json"
+        h = ServerHeaders.applied(to: h)                 // cabeceras propias de Ajustes → Servidores (mandan sobre las demás)
         if body != nil { h["Content-Type"] = json ? "application/json" : "application/x-www-form-urlencoded" }
         let r: (status: Int, data: Data)
         do { r = try await http.send(url: url, method: method, body: body, headers: h, timeout: timeout) }
@@ -275,6 +276,14 @@ public final class EmbyClient: ServerBackend {
         if let au = audio { q += "&AudioStreamIndex=\(au)" }
         if let s = sub, !s.isEmpty { q += "&SubtitleStreamIndex=\(s)&SubtitleMethod=Encode" }
         return q + "&\(keyParam(a))"
+    }
+
+    public func streamOffer(_ item: EmbyItem) async -> StreamOffer? {
+        guard let a = account(), await remoteSource(item) == nil,
+              let j = try? await get("/Users/\(a.userId)/Items/\(item.id)?Fields=MediaSources"),
+              let src = j.arr("MediaSources").first else { return nil }
+        let o = StreamOffers.fromEmbyStreams(src.arr("MediaStreams"))
+        return o.isEmpty ? nil : o
     }
 
     public func streamChoices(_ item: EmbyItem) async -> [StreamChoice] {

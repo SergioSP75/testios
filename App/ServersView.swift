@@ -6,6 +6,7 @@ struct ServersAccountsView: View {
     @StateObject private var hub = ServerHub.shared
     @State private var loginFor: String?          // "emby" | "jellyfin" | "plex"
     @State private var ua = ServerUa.standard
+    @State private var srvHeaders = ServerHeaders.text
     @AppStorage("set.mkvMode") private var mkvMode = "local"
 
     @State private var renaming: String?
@@ -64,6 +65,13 @@ struct ServersAccountsView: View {
                 Button("↺ Valor por defecto") { ServerUa.standard = ""; ua = ServerUa.standard }
             } header: { Text("User agent hacia los servidores") } footer: {
                 Text("Se envía a Emby, Jellyfin, Plex y a los proxies de los .strm. Por defecto: \(ServerUa.defaultValue). Sirve para que un proxy reconozca la app. Ojo: el relé de los .strm solo da DASH (reproducible) si empieza por «Mozilla».")
+            }
+            Section {
+                TextEditor(text: $srvHeaders).font(.system(.footnote, design: .monospaced)).frame(minHeight: 90)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                Button("💾 Guardar cabeceras") { ServerHeaders.text = srvHeaders; srvHeaders = ServerHeaders.text }
+            } header: { Text("Cabeceras propias hacia los servidores") } footer: {
+                Text("Una por línea, «Nombre: valor». Se añaden a las peticiones a Emby, Jellyfin y Plex, y al vídeo (también al descargar), y mandan sobre las demás, incluido el user agent. Sirven para pasar un proxy o una protección sin recompilar.")
             }
         }
         .id(hub.refresh)

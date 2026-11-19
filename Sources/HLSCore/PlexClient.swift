@@ -92,6 +92,7 @@ public final class PlexClient: ServerBackend {
     private func request(_ url: String, method: String = "GET", body: String? = nil, headers: [String: String] = [:], timeout: TimeInterval = 20) async throws -> Data {
         ServerUa.remember(url)
         var h = headers; h["User-Agent"] = userAgent()
+        h = ServerHeaders.applied(to: h)                 // cabeceras propias de Ajustes → Servidores (mandan sobre las demás)
         if body != nil { h["Content-Type"] = "application/x-www-form-urlencoded" }
         let r: (status: Int, data: Data)
         do { r = try await http.send(url: url, method: method, body: body.map { Data($0.utf8) }, headers: h, timeout: timeout) }
@@ -329,6 +330,12 @@ public final class PlexClient: ServerBackend {
         q.append(("X-Plex-Platform", "Chrome")); q.append(("X-Plex-Product", "MediaKillerSP75"))
         q.append(("X-Plex-Client-Identifier", clientId)); q.append(("X-Plex-Token", s.token))
         return "\(base)/video/:/transcode/universal/start.m3u8?" + q.map { "\($0.0)=\(urlEnc($0.1))" }.joined(separator: "&")
+    }
+
+    public func streamOffer(_ item: EmbyItem) async -> StreamOffer? {
+        guard let (_, _, part) = (try? await partOf(item)) ?? nil else { return nil }
+        let o = StreamOffers.fromPlexStreams(part.arr("Stream"))
+        return o.isEmpty ? nil : o
     }
 
     public func streamChoices(_ item: EmbyItem) async -> [StreamChoice] {

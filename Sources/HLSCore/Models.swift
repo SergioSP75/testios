@@ -71,9 +71,19 @@ public struct PlaylistConfig: Codable, Equatable, Identifiable {
     public var name: String
     public var url: String
     public var enabled: Bool
+    /// Cabeceras HTTP propias de la lista (editables en la app): mandan sobre las del fichero.
+    public var extraHeaders: [String: String]
 
-    public init(id: String = UUID().uuidString, name: String, url: String, enabled: Bool = true) {
-        self.id = id; self.name = name; self.url = url; self.enabled = enabled
+    public init(id: String = UUID().uuidString, name: String, url: String, enabled: Bool = true, extraHeaders: [String: String] = [:]) {
+        self.id = id; self.name = name; self.url = url; self.enabled = enabled; self.extraHeaders = extraHeaders
+    }
+
+    // Las listas guardadas por versiones anteriores no tienen «extraHeaders»
+    public init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id); name = try c.decode(String.self, forKey: .name); url = try c.decode(String.self, forKey: .url)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        extraHeaders = try c.decodeIfPresent([String: String].self, forKey: .extraHeaders) ?? [:]
     }
 }
 

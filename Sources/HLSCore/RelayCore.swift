@@ -82,7 +82,7 @@ public final class RelayCore {
     public init(relayBase: String, fetcher: Fetcher, headers: [String: String], clearKeys: [String: String],
                 subtitles: [ExternalSubtitle] = [], durationSec: Int = 14400) {
         self.relayBase = relayBase; self.fetcher = fetcher
-        self.headers = headers; self.clearKeys = clearKeys
+        self.headers = PlayerUa.applying(to: headers); self.clearKeys = clearKeys
         self.subtitles = subtitles; self.durationSec = durationSec
     }
 

@@ -65,8 +65,12 @@ final class PlaylistStore: ObservableObject {
         }
     }
 
-    func update(_ id: String, name: String, url: String) {
-        if let i = playlists.firstIndex(where: { $0.id == id }) { playlists[i].name = name; playlists[i].url = url; save() }
+    func update(_ id: String, name: String, url: String, headers: [String: String]? = nil) {
+        if let i = playlists.firstIndex(where: { $0.id == id }) {
+            playlists[i].name = name; playlists[i].url = url
+            if let h = headers { playlists[i].extraHeaders = h }
+            save()
+        }
     }
     func setEnabled(_ id: String, _ on: Bool) {
         if let i = playlists.firstIndex(where: { $0.id == id }) { playlists[i].enabled = on; save() }
@@ -79,8 +83,8 @@ final class PlaylistStore: ObservableObject {
         save()
     }
 
-    func add(name: String, url: String) {
-        playlists.append(PlaylistConfig(name: name, url: url))
+    func add(name: String, url: String, headers: [String: String] = [:]) {
+        playlists.append(PlaylistConfig(name: name, url: url, extraHeaders: headers))
         save()
     }
 
@@ -95,16 +99,20 @@ final class PlaylistStore: ObservableObject {
 
     /// Recibida por transferencia: sin la misma dirección → se añade; con el mismo nombre y otra dirección → se sustituye.
     /// Devuelve «added», «replaced» o «same».
-    func addOrReplace(name: String, url: String) -> String {
-        if playlists.contains(where: { $0.url == url }) { return "same" }
-        if let i = playlists.firstIndex(where: { $0.name == name }) { playlists[i].url = url; playlists[i].enabled = true; save(); return "replaced" }
-        playlists.append(PlaylistConfig(name: name, url: url)); save(); return "added"
+    func addOrReplace(name: String, url: String, headers: [String: String] = [:]) -> String {
+        if let i = playlists.firstIndex(where: { $0.url == url }) {
+            // Misma dirección: si llegan cabeceras distintas se actualizan (cambiarlas en caliente desde el otro aparato)
+            if playlists[i].extraHeaders != headers { playlists[i].extraHeaders = headers; save(); return "replaced" }
+            return "same"
+        }
+        if let i = playlists.firstIndex(where: { $0.name == name }) { playlists[i].url = url; playlists[i].enabled = true; playlists[i].extraHeaders = headers; save(); return "replaced" }
+        playlists.append(PlaylistConfig(name: name, url: url, extraHeaders: headers)); save(); return "added"
     }
 
     /// Crea o actualiza una lista local (mismo nombre): también arregla las que se guardaron con ruta absoluta.
-    func upsertLocal(name: String, fileName: String) {
+    func upsertLocal(name: String, fileName: String, headers: [String: String] = [:]) {
         let url = "local:" + fileName
-        if let i = playlists.firstIndex(where: { $0.name == name }) { playlists[i].url = url } else { playlists.append(PlaylistConfig(name: name, url: url)) }
+        if let i = playlists.firstIndex(where: { $0.name == name }) { playlists[i].url = url; playlists[i].extraHeaders = headers } else { playlists.append(PlaylistConfig(name: name, url: url, extraHeaders: headers)) }
         save()
     }
 
@@ -139,7 +147,10 @@ final class PlaylistStore: ObservableObject {
             let start = String(text.prefix(40)).replacingOccurrences(of: "\n", with: " ")
             Trace.shared.log("lista", "«\(playlist.name)» HTTP \(status) · \(data.count) bytes · empieza por: \(start)")
             let parsed = M3uParser.parse(text)
-            channels = await Sublists.expand(parsed.channels, fetch: { try await self.fetchText($0) }, log: { Trace.shared.log("lista", $0) })
+            let expanded = await Sublists.expand(parsed.channels, fetch: { try await self.fetchText($0) }, log: { Trace.shared.log("lista", $0) })
+            // Cabeceras propias de la lista: mandan sobre las del fichero (User-Agent y Referer incluidos)
+            channels = playlist.extraHeaders.isEmpty ? expanded : expanded.map { RequestHeaders.apply($0, extra: playlist.extraHeaders) }
+            if !playlist.extraHeaders.isEmpty { Trace.shared.log("lista", "«\(playlist.name)»: \(playlist.extraHeaders.count) cabeceras propias aplicadas") }
             Trace.shared.log("lista", "«\(playlist.name)»: \(parsed.channels.count) canales · guía: \(parsed.epgUrl ?? Self.defaultEpgUrl ?? "ninguna")")
             if let guide = parsed.epgUrl ?? Self.defaultEpgUrl { Task { await loadEpg(guide) } }
         } catch {

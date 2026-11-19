@@ -1,0 +1,172 @@
+[
+ {
+  "name": "HLS clásico en TS (bipbop)",
+  "url": "https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_ts/master.m3u8",
+  "keys": "",
+  "headers": {},
+  "expect": {
+   "kind": "hlsPlain",
+   "engine": "avplayer"
+  }
+ },
+ {
+  "name": "HLS fMP4 HEVC + AC-3 + E-AC-3 (bipbop)",
+  "url": "https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_adv_example_hevc/master.m3u8",
+  "keys": "",
+  "headers": {},
+  "expect": {
+   "kind": "hlsPlain",
+   "engine": "avplayer"
+  }
+ },
+ {
+  "name": "HLS Unified Streaming (Tears of Steel)",
+  "url": "https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8",
+  "keys": "",
+  "headers": {},
+  "expect": {
+   "kind": "hlsPlain",
+   "engine": "avplayer"
+  }
+ },
+ {
+  "name": "DASH Big Buck Bunny 30 fps",
+  "url": "https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps.mpd",
+  "keys": "",
+  "headers": {},
+  "expect": {
+   "kind": "dash",
+   "engine": "avplayer"
+  }
+ },
+ {
+  "name": "DASH MultiRate (Qualcomm)",
+  "url": "https://dash.akamaized.net/dash264/TestCases/1c/qualcomm/2/MultiRate.mpd",
+  "keys": "",
+  "headers": {},
+  "expect": {
+   "kind": "dash",
+   "engine": "avplayer"
+  }
+ },
+ {
+  "name": "DASH Angel One (H.264 y VP9, 4 subtítulos VTT)",
+  "url": "https://storage.googleapis.com/shaka-demo-assets/angel-one-widevine/dash.mpd",
+  "keys": "",
+  "headers": {},
+  "expect": {
+   "kind": "dash",
+   "engine": "avplayer"
+  }
+ },
+ {
+  "name": "Smooth Streaming (Super Speedway)",
+  "url": "https://playready.directtaps.net/smoothstreaming/SSWSS720H264/SuperSpeedway_720.ism/Manifest",
+  "keys": "",
+  "headers": {},
+  "expect": {
+   "kind": "smooth",
+   "engine": "avplayer"
+  }
+ },
+ {
+  "name": "MP4 H.264 + AAC",
+  "url": "https://download.samplelib.com/mp4/sample-5s.mp4",
+  "keys": "",
+  "headers": {},
+  "expect": {
+   "kind": "other",
+   "engine": "avplayer"
+  }
+ },
+ {
+  "name": "MP4 que se llama .mkv (el contenido manda)",
+  "url": "https://test-videos.co.uk/vids/bigbuckbunny/mkv/360/Big_Buck_Bunny_360_10s_1MB.mkv",
+  "keys": "",
+  "headers": {},
+  "expect": {
+   "kind": "other",
+   "engine": "avplayer"
+  }
+ },
+ {
+  "name": "MKV MPEG-4 ASP + MP3 (suite Matroska test1)",
+  "url": "https://raw.githubusercontent.com/ietf-wg-cellar/matroska-test-files/master/test_files/test1.mkv",
+  "keys": "",
+  "headers": {},
+  "expect": {
+   "kind": "matroska",
+   "engine": "vlc"
+  }
+ },
+ {
+  "name": "MKV H.264 + MP3 (suite Matroska test3)",
+  "url": "https://raw.githubusercontent.com/ietf-wg-cellar/matroska-test-files/master/test_files/test3.mkv",
+  "keys": "",
+  "headers": {},
+  "expect": {
+   "kind": "matroska",
+   "engine": "vlc"
+  }
+ },
+ {
+  "name": "MKV H.264 + AAC dos pistas (suite Matroska test5)",
+  "url": "https://raw.githubusercontent.com/ietf-wg-cellar/matroska-test-files/master/test_files/test5.mkv",
+  "keys": "",
+  "headers": {},
+  "expect": {
+   "kind": "matroska",
+   "engine": "avplayer"
+  }
+ },
+ {
+  "name": "WebM VP9",
+  "url": "https://test-videos.co.uk/vids/bigbuckbunny/webm/vp9/360/Big_Buck_Bunny_360_10s_1MB.webm",
+  "keys": "",
+  "headers": {},
+  "expect": {
+   "kind": "matroska",
+   "engine": "vlc"
+  }
+ },
+ {
+  "name": "AVI",
+  "url": "https://www.learningcontainer.com/wp-content/uploads/2020/05/sample-avi-file.avi",
+  "keys": "",
+  "headers": {},
+  "expect": {
+   "kind": "other",
+   "engine": "vlc"
+  }
+ },
+ {
+  "name": "Audio FLAC",
+  "url": "https://samples.ffmpeg.org/flac/Yesterday.flac",
+  "keys": "",
+  "headers": {},
+  "expect": {
+   "kind": "other",
+   "engine": "vlc"
+  }
+ },
+ {
+  "name": "Audio MP3",
+  "url": "https://download.samplelib.com/mp3/sample-3s.mp3",
+  "keys": "",
+  "headers": {},
+  "expect": {
+   "kind": "other",
+   "engine": "avplayer"
+  }
+ },
+ {
+  "name": "Audio WAV",
+  "url": "https://download.samplelib.com/wav/sample-3s.wav",
+  "keys": "",
+  "headers": {},
+  "expect": {
+   "kind": "other",
+   "engine": "avplayer"
+  }
+ }
+]

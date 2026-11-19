@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import AVKit
+import VideoToolbox
 import SwiftUI
 import HLSCore
 
@@ -32,6 +33,8 @@ struct DownloadProbe {
     var audios: [MediaTrack] = []
     var subs: [MediaTrack] = []
     var mkv: [MkvToHls.TrackReport] = []     // si es un MKV: sus pistas y si pasan directas
+    /// Todo lo que ofrece el título (calidades, audios y subtítulos con códec), sea del proveedor o servidor que sea
+    var offer: StreamOffer?
 }
 
 /// Una descarga de la mediateca (equivale a Downloads.kt de Android): se guarda como MP4 en Documents/Descargas.
@@ -115,6 +118,7 @@ final class DownloadManager: ObservableObject {
         var h = ch.httpHeaders
         if let ua = ch.userAgent { h["User-Agent"] = ua }
         if let r = ch.referrer { h["Referer"] = r }
+        h = RequestHeaders.merge(h, ServerHeaders.forUrl(ch.url))      // cabeceras propias de los servidores externos
         jobs.append(DownloadJob(id: ch.id, title: ch.name, url: ch.url, keys: ch.clearKeys, headers: h, poster: ch.m3uLogo, options: options))
         save(); pump()
     }
@@ -191,7 +195,7 @@ final class DownloadManager: ObservableObject {
         // MKV: se mira qué pistas pasan directas al reempaquetar en local y cuáles habría que recodificar
         if StreamSniffer.isMatroska(head), AppSettings.mkvMode == "local",
            let r = await MkvToHls.survey(source: HttpRangeSource(fetcher: URLSessionFetcher(attempts: 3), url: url, headers: h)) {
-            var p = DownloadProbe(); p.mkv = r
+            var p = DownloadProbe(); p.mkv = r; p.offer = StreamOffers.fromMkv(r, facts: Self.deviceFacts())
             p.audios = r.enumerated().filter { $0.element.kind == "Audio" && $0.element.direct }
                 .map { MediaTrack(lang: $0.element.lang, name: $0.element.label, url: URL(string: "mkv://pista/\($0.offset)")!) }
             return p
@@ -200,7 +204,28 @@ final class DownloadManager: ObservableObject {
         let plan = await RelayManager.shared.plan(url: url, headers: h, clearKeys: ch.clearKeys, fixedHeight: 0, minHeight: 0, labels: false)
         defer { RelayManager.shared.end(plan) }
         guard let data = try? await URLSessionFetcher().fetch(plan.url, headers: plan.viaRelay ? [:] : h) else { return nil }
-        return Self.parseMaster(String(decoding: data, as: UTF8.self), base: plan.url)
+        var probe = Self.parseMaster(String(decoding: data, as: UTF8.self), base: plan.url)
+        // Catálogo completo con códecs: el MPD o el Smooth originales dicen más que el HLS que fabrica el relay
+        let facts = Self.deviceFacts()
+        if let full = try? await URLSessionFetcher().fetch(url, headers: h) {
+            let text = String(decoding: full, as: UTF8.self)
+            switch StreamSniffer.kind(ofManifest: text) {
+            case .dash: probe.offer = StreamOffers.fromMpd(text, facts: facts)
+            case .smooth: probe.offer = StreamOffers.fromSmooth(text, facts: facts)
+            default: probe.offer = StreamOffers.fromHls(text, facts: facts, ui: AppSettings.deviceLang)
+            }
+        }
+        if probe.offer == nil || probe.offer!.isEmpty { probe.offer = StreamOffers.fromHls(String(decoding: data, as: UTF8.self), facts: facts, ui: AppSettings.deviceLang) }
+        return probe
+    }
+
+    /// Lo que este aparato decodifica por hardware (para decir si cada pista la abre AVPlayer o VLC).
+    nonisolated static func deviceFacts() -> MediaFacts {
+        var f = MediaFacts()
+        f.hardwareHevc = VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC)
+        f.hardwareVp9 = VTIsHardwareDecodeSupported(kCMVideoCodecType_VP9)
+        if #available(iOS 17.0, *) { f.hardwareAv1 = VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1) }
+        return f
     }
 
     /// Saca de una lista maestra las alturas, los audios y los subtítulos (sin los forzados ni la audiodescripción).
@@ -344,7 +369,7 @@ final class DownloadManager: ObservableObject {
 
     /// Fichero suelto (mp4, mkv…): se baja tal cual y se enseña el progreso y la velocidad.
     private func downloadDirect(_ job: DownloadJob, url: URL, base: String) async throws -> String {
-        let known = ["mp4", "m4v", "mov", "mkv", "avi", "ts", "webm"]
+        let known = ["mp4", "m4v", "mov", "mkv", "avi", "ts", "webm", "wmv", "flv", "mpg", "mpeg", "ogv", "m2ts", "vob", "divx", "mka", "flac", "ogg", "opus", "wma", "mp3", "m4a"]
         var ext = known.contains(url.pathExtension.lowercased()) ? url.pathExtension.lowercased() : ""
         var req = URLRequest(url: url, timeoutInterval: 3600)
         for (k, v) in job.headers { req.setValue(v, forHTTPHeaderField: k) }
@@ -572,7 +597,9 @@ struct DownloadsView: View {
                     Text(j.title).font(.subheadline)
                     if j.state == "listo", let f = dm.fileURL(j) {
                         HStack {
-                            NavigationLink { OfflinePlayer(file: f, title: j.title, subs: j.subs) } label: { Label("Ver sin conexión", systemImage: "play.circle").font(.footnote) }
+                            NavigationLink { OfflineRouter(file: f, title: j.title, subs: j.subs) } label: { Label("Ver sin conexión", systemImage: "play.circle").font(.footnote) }
+                            Spacer()
+                            ExternalFileButton(file: f)           // abrir la película descargada en VLC, Infuse, nPlayer…
                             Spacer()
                             deleteButton(j)
                         }
@@ -655,6 +682,7 @@ struct OfflinePlayer: View {
                             ForEach(audios) { a in Button { chooseAudio(a.id) } label: { Label(a.name, systemImage: audioSel == a.id ? "checkmark" : "") } }
                         } label: { Image(systemName: "speaker.wave.2").frame(width: 44, height: 44).background(.black.opacity(0.6), in: Circle()) }
                     }
+                    ExternalFileButton(file: file, iconOnly: true)
                     AudioDelayButton(applied: $audioDelay, apply: applyDelay)
                     SubtitleStyleMenu()
                 } else { Spacer() }
@@ -740,7 +768,11 @@ struct OfflinePlayer: View {
 }
 
 /// Ventana de opciones antes de descargar (como en Android): calidad, idiomas de audio y de subtítulos.
-struct DownloadRequest: Identifiable { let id = UUID(); var title: String; var channels: [IptvChannel] }
+struct DownloadRequest: Identifiable {
+    let id = UUID(); var title: String; var channels: [IptvChannel]
+    /// Servidores externos: pide al servidor las pistas del título (la dirección de descarga es un fichero y no las dice).
+    var offerProvider: (() async -> StreamOffer?)?
+}
 
 struct DownloadOptionsSheet: View {
     let request: DownloadRequest
@@ -750,6 +782,7 @@ struct DownloadOptionsSheet: View {
     @State private var probe: DownloadProbe?
     @State private var loading = true
     @State private var opts = DownloadOptions.defaults
+    @State private var offer: StreamOffer?
 
     /// Idiomas distintos (por código base) de una lista de pistas, con el nombre de la primera.
     private func languages(_ tracks: [MediaTrack]) -> [(code: String, name: String)] {
@@ -766,6 +799,7 @@ struct DownloadOptionsSheet: View {
                     Section { HStack { ProgressView(); Text("Mirando qué ofrece este título…").font(.footnote) } }
                 } else if let p = probe {
                     if !p.mkv.isEmpty { MkvTracksSection(tracks: p.mkv) }
+                    if let o = offer, p.mkv.isEmpty || request.offerProvider != nil { OfferSections(offer: o) }
                     if p.mkv.isEmpty { Section("Calidad") {
                         Picker("Calidad", selection: $opts.height) {
                             Text("La mejor").tag(0)
@@ -786,6 +820,7 @@ struct DownloadOptionsSheet: View {
                         ForEach(languages(p.subs), id: \.code) { l in Toggle(l.name, isOn: bind(\.subLangs, l.code)) }
                     }
                 } else {
+                    if let o = offer { OfferSections(offer: o) }
                     Section { Text("Fichero directo: se baja tal cual.").font(.footnote) }
                 }
                 Section {
@@ -799,6 +834,9 @@ struct DownloadOptionsSheet: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancelar") { dismiss() } } }
             .task {
                 if let first = request.channels.first { probe = await DownloadManager.shared.inspect(channel: first) }
+                // Servidores externos: el catálogo sale de lo que el servidor dice del título (Emby/Jellyfin/Plex)
+                if let provider = request.offerProvider { offer = await provider() } else { offer = probe?.offer }
+                if probe == nil, let o = offer { var p = DownloadProbe(); p.offer = o; p.heights = o.heights; probe = p }
                 loading = false
             }
         }
@@ -896,5 +934,40 @@ enum DownloadFolder {
         if let o = opened { o.stopAccessingSecurityScopedResource() }
         opened = nil
         UserDefaults.standard.removeObject(forKey: key)
+    }
+}
+
+
+/// Calidades de vídeo, audios y subtítulos que ofrece el título, con códec y canales; cada pista dice si la abre AVPlayer o hace falta VLC.
+struct OfferSections: View {
+    let offer: StreamOffer
+
+    private func engineTag(_ e: PlaybackEngine) -> some View {
+        Text(e == .vlc ? "VLC" : "AVPlayer").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2)
+            .background((e == .vlc ? Color.orange : Color.green).opacity(0.25), in: Capsule())
+    }
+
+    var body: some View {
+        if !offer.videos.isEmpty {
+            Section("Vídeo (\(offer.videos.count))") {
+                ForEach(offer.videos) { v in
+                    HStack { Text(v.label).font(.footnote); Spacer(); engineTag(v.engine) }
+                }
+            }
+        }
+        if !offer.audios.isEmpty {
+            Section("Pistas de audio (\(offer.audios.count))") {
+                ForEach(offer.audios) { a in
+                    HStack { Text(a.label).font(.footnote); Spacer(); engineTag(a.engine) }
+                }
+            }
+        }
+        if !offer.subs.isEmpty {
+            Section("Subtítulos (\(offer.subs.count))") {
+                ForEach(offer.subs) { s in
+                    HStack { Text(s.label).font(.footnote); Spacer(); if s.isImage { Text("imagen").font(.caption2).foregroundStyle(.secondary) } }
+                }
+            }
+        }
     }
 }

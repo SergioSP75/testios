@@ -47,7 +47,8 @@ public enum HlsRewriter {
                 let method = attr(t, "METHOD") ?? ""
                 // FairPlay «skd://<base64 JSON>»: lleva KeyId e IV; la clave sale de la lista (ClearKey) por ese KeyId
                 if method.uppercased() == "SAMPLE-AES", let u = attr(t, "URI"), u.hasPrefix("skd://"), let info = skdInfo(u) {
-                    tsKey = (nil, info.kid, info.iv); continue
+                    // El IV puede ir en la propia etiqueta (IV=0x…) en lugar de dentro del skd
+                    tsKey = (nil, info.kid, info.iv ?? attr(t, "IV").map(Self.ivHex)); continue
                 }
                 if method.uppercased() == "SAMPLE-AES", let u = attr(t, "URI"), !u.hasPrefix("skd:"),
                    (attr(t, "KEYFORMAT") ?? "identity") == "identity" {
@@ -91,6 +92,17 @@ public enum HlsRewriter {
 
     /// Datos de una dirección FairPlay `skd://<base64 de {"ContentId","KeyId","IV"}>`: KeyId (hex sin guiones) e IV (hex).
     static func skdInfo(_ uri: String) -> (kid: String, iv: String?)? {
+        // Forma de consulta «skd://?contentId=…&keyId=<uuid>»: el KeyId va como parámetro y el IV en la etiqueta
+        if uri.hasPrefix("skd://?") || uri.hasPrefix("skd:///?") {
+            let query = uri.components(separatedBy: "?").dropFirst().joined(separator: "?")
+            for pair in query.components(separatedBy: "&") {
+                let kv = pair.components(separatedBy: "=")
+                if kv.count == 2, kv[0].lowercased() == "keyid", !kv[1].isEmpty {
+                    return (kv[1].replacingOccurrences(of: "-", with: "").lowercased(), nil)
+                }
+            }
+            return nil
+        }
         var b = String(uri.dropFirst("skd://".count)).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
         while b.count % 4 != 0 { b += "=" }
         guard let d = Data(base64Encoded: b),
@@ -100,6 +112,9 @@ public enum HlsRewriter {
         if let iv = j["IV"] as? String, let raw = Data(base64Encoded: iv), raw.count == 16 { ivHex = raw.map { String(format: "%02x", $0) }.joined() }
         return (kid.replacingOccurrences(of: "-", with: "").lowercased(), ivHex)
     }
+
+    /// «0xF8E7…» → «f8e7…» (hexadecimal en minúsculas, sin prefijo).
+    static func ivHex(_ v: String) -> String { (v.lowercased().hasPrefix("0x") ? String(v.dropFirst(2)) : v).lowercased() }
 
     // MARK: - Atributos
 

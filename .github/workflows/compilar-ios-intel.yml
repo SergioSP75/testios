@@ -2,17 +2,41 @@ name: Compilar iOS (Intel, respaldo)
 
 # Compila la app en un Mac de GitHub y deja un .ipa SIN firmar como descarga (artifact).
 # Ese .ipa se firma e instala en el iPad con Sideloadly (Apple ID gratuito) o desde Xcode.
+#
+# Gasto mínimo de máquinas de GitHub:
+#  - solo a mano (workflow_dispatch), nunca con un push
+#  - los tests de HLSCore NO se repiten aquí: se pasan antes en el PC (swift test, 125 pruebas) y la compilación ya compila HLSCore
+#  - MobileVLCKit (≈260 MB) va en caché: solo se baja la primera vez
+#  - si se lanza otra compilación mientras hay una en marcha, la anterior se cancela
 on:
   workflow_dispatch:
+
+concurrency:
+  group: compilar-ios
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: macos-15-intel
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
-      - name: Tests de la lógica común (HLSCore)
-        run: swift test
+      - name: Caché de MobileVLCKit
+        id: vlc
+        uses: actions/cache@v4
+        with:
+          path: Frameworks/MobileVLCKit.xcframework
+          key: mobilevlckit-3.6.0-c73b779f
+
+      - name: Bajar MobileVLCKit (solo si no está en caché)
+        if: steps.vlc.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p Frameworks
+          curl -L --fail --retry 3 -o vlc.tar.xz "https://download.videolan.org/pub/cocoapods/prod/MobileVLCKit-3.6.0-c73b779f-dd8bfdba.tar.xz"
+          tar -xJf vlc.tar.xz
+          mv MobileVLCKit-binary/MobileVLCKit.xcframework Frameworks/
+          rm -rf MobileVLCKit-binary vlc.tar.xz
 
       - name: Generar el proyecto Xcode
         run: |
@@ -36,3 +60,4 @@ jobs:
         with:
           name: HLSApp-unsigned-ipa
           path: HLSApp-unsigned.ipa
+          retention-days: 7

@@ -41,3 +41,16 @@ struct ExternalPlayerButton: View {
         }
     }
 }
+
+/// Película ya descargada: la ofrece a otro reproductor (VLC, Infuse, nPlayer…) por la hoja de compartir del sistema.
+/// Una app externa no puede leer la carpeta de esta app por su cuenta, así que se le entrega el fichero (copiar a VLC, Abrir en Infuse…).
+struct ExternalFileButton: View {
+    let file: URL
+    var iconOnly = false
+    var body: some View {
+        ShareLink(item: file) {
+            if iconOnly { Image(systemName: "arrow.up.forward.app").frame(width: 44, height: 44).background(.black.opacity(0.6), in: Circle()).foregroundStyle(.white) }
+            else { Label("Abrir en otro reproductor", systemImage: "arrow.up.forward.app").font(.footnote) }
+        }
+    }
+}

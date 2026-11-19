@@ -72,6 +72,8 @@ enum AppSettings {
     /// Paneles de la vista de TV: lista de canales a la izquierda y guía a la derecha.
     static var showChannelPanel: Bool { UserDefaults.standard.object(forKey: "tv.showChannels") as? Bool ?? true }
     static var showEpgPanel: Bool { UserDefaults.standard.object(forKey: "tv.showEpg") as? Bool ?? true }
+    /// Motor de reproducción: «auto» (AVPlayer y, si no puede, VLC), «avplayer» o «vlc» (ver EngineSetting).
+    static var engine: String { UserDefaults.standard.string(forKey: "set.engine") ?? EngineSetting.auto.rawValue }
     /// El audio sigue sonando con la app en segundo plano.
     static var audioBackground: Bool { UserDefaults.standard.object(forKey: "set.audioBg") as? Bool ?? true }
 }
@@ -85,6 +87,7 @@ struct PlayerSettingsSection: View {
     @AppStorage("set.showQuality") private var showQuality = true
     @AppStorage("set.qualityAlways") private var qualityAlways = true
     @AppStorage("set.audioBg") private var audioBg = true
+    @AppStorage("set.engine") private var engine = EngineSetting.auto.rawValue
     @AppStorage("set.epgDays") private var epgDays = 3
     @AppStorage("tv.showChannels") private var showChannels = true
     @AppStorage("tv.showEpg") private var showEpg = true
@@ -92,6 +95,10 @@ struct PlayerSettingsSection: View {
 
     var body: some View {
         Section("Reproductor") {
+            Picker("Motor", selection: $engine) {
+                ForEach(EngineSetting.allCases, id: \.rawValue) { Text($0.label).tag($0.rawValue) }
+            }.themedRow()
+            if !VlcEngine.isAvailable { Text("Esta compilación no lleva VLC: solo funciona AVPlayer.").font(.caption).foregroundStyle(themes.theme.c(themes.theme.dim)).themedRow() }
             Toggle("Pantalla completa (sin marcos)", isOn: $fullscreen).themedRow()
             Toggle("Rellenar pantalla (recorta bordes)", isOn: $fill).themedRow()
             Toggle("Mostrar resolución y velocidad", isOn: $showQuality).themedRow()

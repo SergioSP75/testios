@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import AVFoundation
 import VideoToolbox
 import HLSCore
@@ -8,6 +9,11 @@ import HLSCore
 @MainActor
 final class PlayerModel: ObservableObject {
     @Published var player: AVPlayer?
+    /// Qué reproductor está abierto ahora: AVPlayer (con el relay propio) o VLC (decodifica casi todo por software).
+    @Published private(set) var engine: PlaybackEngine = .avplayer
+    /// VLC: se crea la primera vez que hace falta (la librería es pesada).
+    private(set) lazy var vlc = VlcEngine()
+    private var vlcSinks: [AnyCancellable] = []
     /// Retardo del audio pedido por el usuario (ms): positivo = suena más tarde.
     @Published var audioDelayMs = 0
     /// El reproductor que está en marcha (lo usan las órdenes de depuración para simular acciones).
@@ -33,6 +39,8 @@ final class PlayerModel: ObservableObject {
     private var subtitleLogged = false
     /// Si con la resolución mínima de Ajustes no abre, se vuelve a intentar sin ella (una sola vez).
     private var fellBack = false
+    /// Ya se probó VLC tras un fallo de AVPlayer en este título (no se repite).
+    private var fellBackToVlc = false
     /// Aviso mientras se prueba con otra pista porque la elegida no abre («Probando con otra pista…»); se quita solo al arrancar bien.
     @Published var notice: String?
     /// Grupos de audio que ya se probaron y no abrieron, y los que ofrece la lista (para probar el siguiente)
@@ -75,9 +83,10 @@ final class PlayerModel: ObservableObject {
         if headers["User-Agent"]?.lowercased() == "default" { headers["User-Agent"] = ServerUa.standard }
         // Vídeo de un servidor externo (Emby, Jellyfin, Plex, proxies .strm): lleva el user agent de Ajustes → Servidores
         if headers["User-Agent"] == nil, let ua = ServerUa.forUrl(url.absoluteString) { headers["User-Agent"] = ua }
+        headers = RequestHeaders.merge(headers, ServerHeaders.forUrl(url.absoluteString))        // cabeceras propias de los servidores
         lastStart = (url, headers, clearKeys)
         PlayerModel.current = self
-        if minHeight == nil, fixedHeight == 0 { fellBack = false }
+        if minHeight == nil, fixedHeight == 0 { fellBack = false; fellBackToVlc = false }
         if minHeight == nil, fixedHeight == 0, audioGroup == nil { triedGroups = []; notice = nil }
         if audioGroup == nil, minHeight == nil, fixedHeight == 0 { chosenAudioGroup = nil }      // arranque nuevo: sin grupo forzado
         else if audioGroup != nil { chosenAudioGroup = audioGroup }
@@ -86,10 +95,28 @@ final class PlayerModel: ObservableObject {
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         try? AVAudioSession.sharedInstance().setActive(true)
 
+        // Motor: ajuste del usuario + lo que se sabe del título. Los contenedores que AVPlayer no abre (AVI, FLAC, WMV…) van directos a VLC;
+        // con «Siempre VLC» y sin DRM también (VLC lee HLS, DASH y ficheros por sí mismo). Con claves hace falta el relay que descifra.
+        let setting = EngineSetting(rawValue: AppSettings.engine) ?? .auto
+        let ext = EngineChooser.fileExtension(of: url.absoluteString)
+        if VlcEngine.isAvailable, clearKeys.isEmpty, engineFor(setting: setting, ext: ext) == .vlc, !VlcEngine.needsRelayForHeaders(headers) {
+            startVlc(url: url, headers: headers, reason: setting == .vlc ? "motor VLC (ajuste)" : "VLC (formato .\(ext.isEmpty ? "?" : ext))")
+            return
+        }
+
         let plan = await RelayManager.shared.plan(url: url, headers: headers, clearKeys: clearKeys, fixedHeight: fixedHeight, minHeight: minHeight, audioGroup: chosenAudioGroup)
         // Otro arranque (otro canal) se adelantó mientras se preparaba este: se descarta
         guard gen == startGen else { RelayManager.shared.end(plan); return }
         self.plan = plan
+        if VlcEngine.isAvailable {
+            let wantsVlc = setting == .vlc || (setting == .auto && !plan.viaRelay && plan.reason.hasPrefix("MKV directo"))
+            if wantsVlc {
+                // Con relay (descifrado, DASH→HLS…) VLC lee el HLS del relay; sin relay, la dirección original
+                if plan.viaRelay { self.plan = plan } else { RelayManager.shared.end(plan); self.plan = nil }
+                startVlc(url: plan.viaRelay ? plan.url : url, headers: plan.viaRelay ? [:] : headers, reason: "VLC · " + plan.reason)
+                return
+            }
+        }
         if let sid = plan.sessionId, let m = RelayManager.shared.mkv(sid) { m.audioDelayMs = audioDelayMs }
         if plan.viaRelay { Task { await self.loadAllAudio(plan.url) } }
         status = "reproduciendo por: \(plan.reason)"
@@ -139,6 +166,14 @@ final class PlayerModel: ObservableObject {
                         self.notice = "Probando con otra pista…"
                         Trace.shared.log("avplayer", "no abre: se prueba con el grupo de audio «\(next)»")
                         await self.start(url: a.0, headers: a.1, clearKeys: a.2, fixedHeight: self.chosenHeight, minHeight: 0, audioGroup: next)
+                    } else if VlcEngine.isAvailable, EngineChooser.fallbackAfterFailure(setting: EngineSetting(rawValue: AppSettings.engine) ?? .auto, current: .avplayer) != nil,
+                              !self.fellBackToVlc, let a = self.lastStart {
+                        // Último recurso: VLC decodifica por software lo que AVPlayer no abre (solo en «Automático»)
+                        self.fellBackToVlc = true
+                        self.notice = "Probando con VLC…"
+                        Trace.shared.log("avplayer", "no abre: se prueba con VLC")
+                        self.player?.pause(); self.player = nil
+                        self.startVlc(url: plan.viaRelay ? plan.url : a.0, headers: plan.viaRelay ? [:] : a.1, reason: "VLC (AVPlayer no pudo abrirlo)")
                     }
                 }
                 if it.status == .readyToPlay { self.notice = nil; self.triedGroups = []; self.refreshTracks(it); self.status = "listo (\(plan.reason))"; Trace.shared.log("avplayer", "listo · pistas=\(it.asset.tracks.count)") }
@@ -215,6 +250,39 @@ final class PlayerModel: ObservableObject {
         Trace.shared.log("avplayer", "start \(plan.url.host ?? "?") · \(plan.reason)")
         player = p
         p.play()
+    }
+
+    /// Motor que corresponde al ajuste y a la extensión, sin mirar aún el contenido (eso lo hace el relay después).
+    private func engineFor(setting: EngineSetting, ext: String) -> PlaybackEngine {
+        switch setting {
+        case .vlc: return ["mpd", "ism", "m3u8", "m3u"].contains(ext) ? .avplayer : .vlc      // manifiestos: antes pasan por el relay por si llevan DRM
+        case .avplayer: return .avplayer
+        case .auto: return EngineChooser.vlcOnlyExtensions.contains(ext) ? .vlc : .avplayer
+        }
+    }
+
+    /// Arranca VLC con la dirección dada y enlaza su estado (posición, pistas, error) con el modelo.
+    private func startVlc(url: URL, headers: [String: String], reason: String) {
+        engine = .vlc
+        player = nil
+        vlcSinks.forEach { $0.cancel() }
+        vlcSinks = [
+            vlc.$positionSec.sink { [weak self] in self?.lastTime = $0 },
+            vlc.$durationSec.sink { [weak self] in self?.duration = $0 },
+            vlc.$videoSize.sink { [weak self] s in
+                guard let self = self, s.width > 0 else { return }
+                self.videoSize = s; self.qualityText = "\(Int(s.width))x\(Int(s.height)) · VLC"
+            },
+            vlc.$audioChoices.sink { [weak self] in self?.audioChoices = $0 },
+            vlc.$subtitleChoices.sink { [weak self] in self?.subtitleChoices = $0 },
+            vlc.$audioInfo.sink { [weak self] in self?.audioInfo = $0 },
+            vlc.$isPlaying.sink { [weak self] playing in if playing { self?.notice = nil } },
+            vlc.$errorText.sink { [weak self] in if let e = $0 { self?.errorText = e } },
+        ]
+        status = "reproduciendo por: \(reason)"
+        notice = nil
+        Trace.shared.log("vlc", reason)
+        vlc.play(url: url, headers: headers, bufferSeconds: AppSettings.bufferSeconds)
     }
 
     /// Vuelve a leer qué pistas hay y cuál está elegida (al abrir y cada vez que cambia la selección).
@@ -327,10 +395,12 @@ final class PlayerModel: ObservableObject {
 
     /// Elige una pista de audio (`index` del menú) o de subtítulos (`nil` = sin subtítulos).
     func selectAudio(_ index: Int) {
+        if engine == .vlc { vlc.selectAudio(index); return }
         guard let item = player?.currentItem, let g = item.asset.mediaSelectionGroup(forMediaCharacteristic: .audible), index < g.options.count else { return }
         item.select(g.options[index], in: g)
     }
     func selectSubtitle(_ index: Int?) {
+        if engine == .vlc { vlc.selectSubtitle(index); return }
         guard let item = player?.currentItem, let g = item.asset.mediaSelectionGroup(forMediaCharacteristic: .legible) else { return }
         if let i = index, i < g.options.count { item.select(g.options[i], in: g) } else { item.select(nil, in: g); subtitleText = "" }
     }
@@ -342,6 +412,7 @@ final class PlayerModel: ObservableObject {
     /// Mueve el audio respecto a la imagen. Hoy vale para los MKV pasados a HLS en el dispositivo (se reinicia por donde iba);
     /// en descargas lo hace el reproductor de descargas. Devuelve un texto si este tipo de reproducción no lo admite.
     func setAudioDelay(_ ms: Int) async -> String? {
+        if engine == .vlc { vlc.setAudioDelay(ms: ms); audioDelayMs = ms; return nil }       // VLC mueve el audio al vuelo
         guard let sid = plan?.sessionId, let m = RelayManager.shared.mkv(sid) else {
             return "Este tipo de reproducción no permite mover el audio. Funciona en MKV pasados a HLS en el iPad y en las descargas."
         }
@@ -353,7 +424,10 @@ final class PlayerModel: ObservableObject {
         return nil
     }
 
-    func seek(to seconds: Double) { player?.seek(to: CMTime(seconds: seconds, preferredTimescale: 600)) }
+    func seek(to seconds: Double) {
+        if engine == .vlc { vlc.seek(to: seconds); return }
+        player?.seek(to: CMTime(seconds: seconds, preferredTimescale: 600))
+    }
 
     /// Fija la calidad: se vuelve a preparar la reproducción con solo la variante que corresponde (0 = automática)
     /// y se retoma por donde iba. Cambiar `preferredMaximumResolution` en marcha apenas se notaba.
@@ -423,6 +497,9 @@ final class PlayerModel: ObservableObject {
     }
 
     func stop() {
+        if engine == .vlc { vlc.stop() }
+        vlcSinks.forEach { $0.cancel() }; vlcSinks = []
+        engine = .avplayer
         if let t = timeObserver { player?.removeTimeObserver(t); timeObserver = nil }
         observer = nil; rateObserver = nil
         tokens.forEach { NotificationCenter.default.removeObserver($0) }; tokens = []

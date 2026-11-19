@@ -49,6 +49,7 @@ struct LiveListsView: View {
     @State private var adding = false
     @State private var name = ""
     @State private var url = ""
+    @State private var headersText = ""          // cabeceras propias de la lista, una por línea («Nombre: valor»)
 
     var body: some View {
         List {
@@ -59,31 +60,32 @@ struct LiveListsView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(pl.name)
                             Text(pl.url.hasPrefix("local:") ? "Lista local" : String(pl.url.prefix(58)) + "…").font(.caption2).foregroundStyle(themes.theme.c(themes.theme.dim))
+                            if !pl.extraHeaders.isEmpty { Text("\(pl.extraHeaders.count) cabeceras propias").font(.caption2).foregroundStyle(themes.theme.accentColor) }
                         }
                         Spacer()
-                        Button { editing = pl; name = pl.name; url = pl.url } label: { Image(systemName: "pencil") }.buttonStyle(.borderless)
+                        Button { editing = pl; name = pl.name; url = pl.url; headersText = RequestHeaders.format(pl.extraHeaders) } label: { Image(systemName: "pencil") }.buttonStyle(.borderless)
                     }.themedRow()
                 }
                 .onDelete(perform: store.remove)
             } footer: { Text("Solo las activadas salen en la pantalla principal. Desliza para borrar.") }
             Section {
-                Button { name = ""; url = ""; adding = true } label: { Label("Añadir lista…", systemImage: "plus.circle") }.themedRow()
+                Button { name = ""; url = ""; headersText = ""; adding = true } label: { Label("Añadir lista…", systemImage: "plus.circle") }.themedRow()
                 NavigationLink { ListTransferView() } label: { Label("📡 Enviar / recibir listas", systemImage: "qrcode") }.themedRow()
                 Button { store.restoreDefaults() } label: { Label("Restaurar las listas de la app", systemImage: "arrow.counterclockwise") }.themedRow()
             }
         }
         .themedScreen().navigationTitle("Listas de directo")
-        .alert("Nueva lista", isPresented: $adding) {
-            TextField("Nombre", text: $name)
-            TextField("Dirección (M3U)", text: $url).textInputAutocapitalization(.never).keyboardType(.URL)
-            Button("Añadir") { if !url.isEmpty { store.add(name: name.isEmpty ? url : name, url: url) } }
-            Button("Cancelar", role: .cancel) {}
+        .sheet(isPresented: $adding) {
+            ListEditSheet(title: "Nueva lista", name: $name, url: $url, headers: $headersText, saveLabel: "Añadir") {
+                if !url.isEmpty { store.add(name: name.isEmpty ? url : name, url: url, headers: RequestHeaders.parse(headersText)) }
+                adding = false
+            } cancel: { adding = false }
         }
-        .alert("Editar lista", isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
-            TextField("Nombre", text: $name)
-            TextField("Dirección (M3U)", text: $url).textInputAutocapitalization(.never).keyboardType(.URL)
-            Button("Guardar") { if let e = editing { store.update(e.id, name: name, url: url) }; editing = nil }
-            Button("Cancelar", role: .cancel) { editing = nil }
+        .sheet(isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
+            ListEditSheet(title: "Editar lista", name: $name, url: $url, headers: $headersText, saveLabel: "Guardar") {
+                if let e = editing { store.update(e.id, name: name, url: url, headers: RequestHeaders.parse(headersText)) }
+                editing = nil
+            } cancel: { editing = nil }
         }
     }
 }
@@ -245,5 +247,39 @@ struct AboutView: View {
             } footer: { Text("Se envía en el User-Agent al descargar las listas, para identificar qué aparato las pide:\n\(DeviceId.playlistUserAgent)") }
         }
         .themedScreen().navigationTitle("Acerca de")
+    }
+}
+
+/// Formulario de una lista: nombre, dirección y cabeceras HTTP propias (una por línea). Las propias mandan sobre las del fichero
+/// y viajan con la lista al enviarla por QR a otro aparato.
+struct ListEditSheet: View {
+    let title: String
+    @Binding var name: String
+    @Binding var url: String
+    @Binding var headers: String
+    let saveLabel: String
+    let save: () -> Void
+    let cancel: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Lista") {
+                    TextField("Nombre", text: $name)
+                    TextField("Dirección (M3U)", text: $url).textInputAutocapitalization(.never).keyboardType(.URL).autocorrectionDisabled()
+                }
+                Section {
+                    TextEditor(text: $headers).font(.system(.footnote, design: .monospaced)).frame(minHeight: 110)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                } header: { Text("Cabeceras propias") } footer: {
+                    Text("Una por línea, «Nombre: valor». Ejemplo:\nUser-Agent: AppleCoreMedia\nReferer: https://sitio.tv/\nMandan sobre las del fichero de la lista y se envían con ella al transferirla.")
+                }
+            }
+            .navigationTitle(title).navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancelar", action: cancel) }
+                ToolbarItem(placement: .confirmationAction) { Button(saveLabel, action: save) }
+            }
+        }
     }
 }

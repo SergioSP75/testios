@@ -136,6 +136,8 @@ public protocol ServerBackend: AnyObject {
     func posterUrl(_ item: EmbyItem, maxWidth: Int) -> String?
     func streamUrl(_ item: EmbyItem) async throws -> String?
     func streamChoices(_ item: EmbyItem) async -> [StreamChoice]
+    /// Vídeo, audios y subtítulos que tiene el título en el servidor (para elegir qué descargar); nil si el servidor no los da.
+    func streamOffer(_ item: EmbyItem) async -> StreamOffer?
     func streamUrlFor(_ item: EmbyItem, _ p: StreamParams) async throws -> String?
 }
 

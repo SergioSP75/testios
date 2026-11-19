@@ -1,0 +1,234 @@
+[
+ {
+  "name": "Prueba de formatos",
+  "category": "Pruebas",
+  "info": {
+   "year": "2026",
+   "plot": "Formatos de vídeo y audio para validar el reproductor (AVPlayer, relay y VLC). Solo enlaces públicos.",
+   "genre": [
+    "Pruebas"
+   ]
+  },
+  "seasons": [
+   {
+    "season": 1,
+    "episodes": [
+     {
+      "episode": 1,
+      "name": "HLS clásico en TS (bipbop)",
+      "video": "https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_ts/master.m3u8",
+      "info": {
+       "plot": "HLS TS H.264 + AAC, subtítulos WebVTT, varias calidades"
+      },
+      "expect": {
+       "kind": "hlsPlain",
+       "engine": "avplayer"
+      }
+     },
+     {
+      "episode": 2,
+      "name": "HLS fMP4 HEVC + AC-3 + E-AC-3 (bipbop)",
+      "video": "https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_adv_example_hevc/master.m3u8",
+      "info": {
+       "plot": "HEVC y H.264, audio AAC/AC-3/E-AC-3 5.1, subtítulos"
+      },
+      "expect": {
+       "kind": "hlsPlain",
+       "engine": "avplayer"
+      }
+     },
+     {
+      "episode": 3,
+      "name": "HLS Unified Streaming (Tears of Steel)",
+      "video": "https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8",
+      "info": {
+       "plot": "HLS simple con audio+vídeo en la misma variante"
+      },
+      "expect": {
+       "kind": "hlsPlain",
+       "engine": "avplayer"
+      }
+     },
+     {
+      "episode": 4,
+      "name": "DASH Big Buck Bunny 30 fps",
+      "video": "https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps.mpd",
+      "info": {
+       "plot": "DASH H.264 + AAC, SegmentTemplate"
+      },
+      "expect": {
+       "kind": "dash",
+       "engine": "avplayer"
+      }
+     },
+     {
+      "episode": 5,
+      "name": "DASH MultiRate (Qualcomm)",
+      "video": "https://dash.akamaized.net/dash264/TestCases/1c/qualcomm/2/MultiRate.mpd",
+      "info": {
+       "plot": "DASH varias calidades"
+      },
+      "expect": {
+       "kind": "dash",
+       "engine": "avplayer"
+      }
+     },
+     {
+      "episode": 6,
+      "name": "DASH Angel One (H.264 y VP9, 4 subtítulos VTT)",
+      "video": "https://storage.googleapis.com/shaka-demo-assets/angel-one-widevine/dash.mpd",
+      "info": {
+       "plot": "VP9 sin hardware → VLC; cifrado Widevine: solo se mira el catálogo"
+      },
+      "expect": {
+       "kind": "dash",
+       "engine": "avplayer"
+      }
+     },
+     {
+      "episode": 7,
+      "name": "Smooth Streaming (Super Speedway)",
+      "video": "https://playready.directtaps.net/smoothstreaming/SSWSS720H264/SuperSpeedway_720.ism/Manifest",
+      "info": {
+       "plot": "Smooth H.264 + AAC"
+      },
+      "expect": {
+       "kind": "smooth",
+       "engine": "avplayer"
+      }
+     }
+    ]
+   },
+   {
+    "season": 2,
+    "episodes": [
+     {
+      "episode": 1,
+      "name": "MP4 H.264 + AAC",
+      "video": "https://download.samplelib.com/mp4/sample-5s.mp4",
+      "info": {
+       "plot": "MP4 directo"
+      },
+      "expect": {
+       "kind": "other",
+       "engine": "avplayer"
+      }
+     },
+     {
+      "episode": 2,
+      "name": "MP4 que se llama .mkv (el contenido manda)",
+      "video": "https://test-videos.co.uk/vids/bigbuckbunny/mkv/360/Big_Buck_Bunny_360_10s_1MB.mkv",
+      "info": {
+       "plot": "extensión .mkv pero es MP4 H.264: se detecta por los bytes"
+      },
+      "expect": {
+       "kind": "other",
+       "engine": "avplayer"
+      }
+     },
+     {
+      "episode": 3,
+      "name": "MKV MPEG-4 ASP + MP3 (suite Matroska test1)",
+      "video": "https://raw.githubusercontent.com/ietf-wg-cellar/matroska-test-files/master/test_files/test1.mkv",
+      "info": {
+       "plot": "MKV con vídeo DivX/Xvid y audio MP3: no pasa directo a HLS, va a VLC"
+      },
+      "expect": {
+       "kind": "matroska",
+       "engine": "vlc"
+      }
+     },
+     {
+      "episode": 4,
+      "name": "MKV H.264 + MP3 (suite Matroska test3)",
+      "video": "https://raw.githubusercontent.com/ietf-wg-cellar/matroska-test-files/master/test_files/test3.mkv",
+      "info": {
+       "plot": "H.264 pasa directo pero el MP3 no, va a VLC"
+      },
+      "expect": {
+       "kind": "matroska",
+       "engine": "vlc"
+      }
+     },
+     {
+      "episode": 5,
+      "name": "MKV H.264 + AAC dos pistas (suite Matroska test5)",
+      "video": "https://raw.githubusercontent.com/ietf-wg-cellar/matroska-test-files/master/test_files/test5.mkv",
+      "info": {
+       "plot": "MKV con varias pistas"
+      },
+      "expect": {
+       "kind": "matroska",
+       "engine": "avplayer"
+      }
+     },
+     {
+      "episode": 6,
+      "name": "WebM VP9",
+      "video": "https://test-videos.co.uk/vids/bigbuckbunny/webm/vp9/360/Big_Buck_Bunny_360_10s_1MB.webm",
+      "info": {
+       "plot": "WebM VP9: sin hardware VP9 → VLC"
+      },
+      "expect": {
+       "kind": "matroska",
+       "engine": "vlc"
+      }
+     },
+     {
+      "episode": 7,
+      "name": "AVI",
+      "video": "https://www.learningcontainer.com/wp-content/uploads/2020/05/sample-avi-file.avi",
+      "info": {
+       "plot": "AVI: solo VLC"
+      },
+      "expect": {
+       "kind": "other",
+       "engine": "vlc"
+      }
+     }
+    ]
+   },
+   {
+    "season": 3,
+    "episodes": [
+     {
+      "episode": 1,
+      "name": "Audio FLAC",
+      "video": "https://samples.ffmpeg.org/flac/Yesterday.flac",
+      "info": {
+       "plot": "FLAC sin vídeo: solo VLC"
+      },
+      "expect": {
+       "kind": "other",
+       "engine": "vlc"
+      }
+     },
+     {
+      "episode": 2,
+      "name": "Audio MP3",
+      "video": "https://download.samplelib.com/mp3/sample-3s.mp3",
+      "info": {
+       "plot": "MP3 directo"
+      },
+      "expect": {
+       "kind": "other",
+       "engine": "avplayer"
+      }
+     },
+     {
+      "episode": 3,
+      "name": "Audio WAV",
+      "video": "https://download.samplelib.com/wav/sample-3s.wav",
+      "info": {
+       "plot": "WAV directo"
+      },
+      "expect": {
+       "kind": "other",
+       "engine": "avplayer"
+      }
+     }
+    ]
+   }
+  ]
+ }
+]

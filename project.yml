@@ -15,6 +15,11 @@ targets:
     sources: [App]
     dependencies:
       - package: HLSCore
+      # MobileVLCKit 3.6.0 (decodifica casi todo por software). Es una librería dinámica: se incrusta en la app y se firma con ella.
+      # La baja la CI (o se copia a mano) en Frameworks/MobileVLCKit.xcframework; ver .github/workflows/compilar-ios-intel.yml
+      - framework: Frameworks/MobileVLCKit.xcframework
+        embed: true
+        codeSign: true
     info:
       path: App/Info.plist
       properties:

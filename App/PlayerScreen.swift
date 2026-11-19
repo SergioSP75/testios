@@ -52,7 +52,8 @@ struct PlayerScreen: View {
     var body: some View {
         ZStack(alignment: .top) {
             Color.black.ignoresSafeArea()
-            if let player = model.player { FullscreenVideo(player: player, onTap: { withAnimation { showBar = true }; scheduleHide() }).ignoresSafeArea(edges: full ? .all : []) } else { ProgressView().tint(.white) }
+            if model.engine == .vlc { VlcVideoView(engine: model.vlc, onTap: { withAnimation { showBar = true }; scheduleHide() }).ignoresSafeArea(edges: full ? .all : []) }
+            else if let player = model.player { FullscreenVideo(player: player, onTap: { withAnimation { showBar = true }; scheduleHide() }).ignoresSafeArea(edges: full ? .all : []) } else { ProgressView().tint(.white) }
             if AppSettings.ownSubtitles { SubtitleOverlay(text: model.subtitleText).ignoresSafeArea() }
             VStack(spacing: 0) {
                 topBar
@@ -100,7 +101,7 @@ struct PlayerScreen: View {
                     .background(.black.opacity(showBar ? 0.6 : 0.35), in: Circle())
             }
             if showBar {
-                QualityMenu(model: model)
+                if model.engine == .avplayer { QualityMenu(model: model) }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(channel.name).font(.subheadline.bold()).lineLimit(1)
                     if AppSettings.showQuality, !model.qualityText.isEmpty { Text(model.qualityText).font(.caption2.monospacedDigit()) }
@@ -169,7 +170,7 @@ struct TrackMenus: View {
                 if model.externalURL != nil { ExternalPlayerButton(urlProvider: { model.externalURL }, iconOnly: true) }
                 AudioDelayButton(applied: $model.audioDelayMs, apply: model.setAudioDelay)
                 if AppSettings.ownSubtitles { SubtitleStyleMenu() }
-                AirPlayButton().frame(width: 44, height: 44).background(.black.opacity(0.6), in: Circle())
+                if model.engine == .avplayer { AirPlayButton().frame(width: 44, height: 44).background(.black.opacity(0.6), in: Circle()) }
         }
     }
 }

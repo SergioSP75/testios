@@ -10,7 +10,7 @@ import HLSCore
 //  · Red local: el receptor abre un servidor HTTP mínimo. Dirección: http://<ip>:<puerto>/r/<token>  (el token evita inyecciones).
 //  · Internet (relay cifrado): canal aleatorio en ntfy.sh. Dirección: https://ntfy.sh/<canal>#k=<clave>. La clave va solo tras el «#»
 //    (no llega al servidor): el relay solo ve AES-256-GCM. El receptor confirma por «<canal>-ack», también cifrado.
-// Contenido: {"v":1,"rid":…,"from":…,"lists":[{name,url,isLocal,content?}],"media":[{name,url,isLocal,enabled,content?}]}
+// Contenido: {"v":1,"rid":…,"from":…,"lists":[{name,url,isLocal,content?,headers?}],"media":[{name,url,isLocal,enabled,content?}]}
 
 // MARK: - Cifrado del relay
 
@@ -141,19 +141,20 @@ enum TransferApply {
             let name = ((o["name"] as? String) ?? "").isEmpty ? "Lista recibida" : (o["name"] as! String)
             let url = ((o["url"] as? String) ?? "").trimmingCharacters(in: .whitespaces)
             let existing = store.playlists.first { $0.name == name }
+            let hdrs = RequestHeaders.fromJSON(o["headers"])           // cabeceras propias de la lista (mandan sobre las del fichero)
             if (o["isLocal"] as? Bool) == true, let content = o["content"] as? String, !content.isEmpty {
                 // Lista local del emisor: se guarda como fichero propio
                 if existing != nil, !(await confirm("La lista «\(name)» ya existe. ¿Sustituirla por la de \(from)?")) { skipped.append(name); continue }
                 let file = "lista_\(safe(name)).m3u"
                 try? content.write(to: docs.appendingPathComponent(file), atomically: true, encoding: .utf8)
-                store.upsertLocal(name: name, fileName: file)
+                store.upsertLocal(name: name, fileName: file, headers: hdrs)
                 if existing != nil { over.append(name) } else { added.append(name) }
                 continue
             }
             if url.isEmpty { skipped.append("\(name) (sin dirección)"); continue }
-            if store.playlists.contains(where: { $0.url == url }) { skipped.append(name); continue }     // misma lista
-            if existing != nil, !(await confirm("La lista «\(name)» ya existe con otra dirección. ¿Sustituirla por la de \(from)?")) { skipped.append(name); continue }
-            switch store.addOrReplace(name: name, url: url) {
+            if store.playlists.contains(where: { $0.url == url && $0.extraHeaders == hdrs }) { skipped.append(name); continue }     // misma lista y mismas cabeceras
+            if existing != nil, existing?.url != url, !(await confirm("La lista «\(name)» ya existe con otra dirección. ¿Sustituirla por la de \(from)?")) { skipped.append(name); continue }
+            switch store.addOrReplace(name: name, url: url, headers: hdrs) {
             case "added": added.append(name)
             case "replaced": over.append(name)
             default: skipped.append(name)
@@ -416,6 +417,7 @@ enum TransferSender {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let l: [[String: Any]] = lists.map { p in
             var o: [String: Any] = ["name": p.name, "url": p.url, "isLocal": false, "forceFfmpeg": false]
+            if !p.extraHeaders.isEmpty { o["headers"] = p.extraHeaders }      // cabeceras propias: viajan con la lista (igual que Android)
             if p.url.hasPrefix("local:"), let text = try? String(contentsOf: docs.appendingPathComponent(String(p.url.dropFirst(6))), encoding: .utf8) {
                 o["isLocal"] = true; o["content"] = text
             }

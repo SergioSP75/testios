@@ -3,3 +3,5 @@
 xcuserdata/
 .swiftpm/
 DerivedData/
+Frameworks/
+TestSeries/*.local.json

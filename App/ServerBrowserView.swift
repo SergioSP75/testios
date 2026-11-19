@@ -204,7 +204,7 @@ struct ServerDetailView: View {
                             .background(t.accentColor, in: Capsule()).foregroundStyle(.black)
                     }
                     Button {
-                        Task { let chs = await ServerDownloads.channels(backend, [item]); if chs.isEmpty { message = "El servidor no dio la dirección de descarga" } else { request = DownloadRequest(title: item.name, channels: chs) } }
+                        Task { let chs = await ServerDownloads.channels(backend, [item]); if chs.isEmpty { message = "El servidor no dio la dirección de descarga" } else { request = DownloadRequest(title: item.name, channels: chs, offerProvider: { await backend.streamOffer(item) }) } }
                     } label: {
                         Label(queued ? "En descargas" : "Descargar", systemImage: queued ? "checkmark.circle" : "arrow.down.circle")
                             .font(.subheadline).padding(.horizontal, 12).padding(.vertical, 8)
@@ -292,7 +292,7 @@ struct EpisodesView: View {
                         }
                     }
                     Button {
-                        Task { let chs = await ServerDownloads.channels(backend, [e], seriesName: series.name); if !chs.isEmpty { request = DownloadRequest(title: "\(series.name) · \(e.name)", channels: chs) } }
+                        Task { let chs = await ServerDownloads.channels(backend, [e], seriesName: series.name); if !chs.isEmpty { request = DownloadRequest(title: "\(series.name) · \(e.name)", channels: chs, offerProvider: { await backend.streamOffer(e) }) } }
                     } label: { Image(systemName: dl.isQueued("\(backend.kind)-\(e.id)") ? "checkmark.circle" : "arrow.down.circle") }
                         .buttonStyle(.borderless).disabled(dl.isQueued("\(backend.kind)-\(e.id)"))
                 }
